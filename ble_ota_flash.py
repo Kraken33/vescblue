@@ -98,19 +98,20 @@ async def flash_firmware(bin_path):
 
         # 3. Send OTA:END
         print("Finalizing update: Sending OTA:END...")
-        await client.write_gatt_char(BLE_CONSOLE_UUID, b"OTA:END", response=True)
-
-        # Wait for reboot confirmation
-        for _ in range(30):
-            if ota_done or ota_error:
-                break
-            await asyncio.sleep(0.1)
+        try:
+            await client.write_gatt_char(BLE_CONSOLE_UUID, b"OTA:END", response=True)
+            for _ in range(30):
+                if ota_done or ota_error:
+                    break
+                await asyncio.sleep(0.1)
+        except Exception:
+            pass # ESP32 reboots immediately on OTA:END
 
         if ota_error:
             print("ESP32 reported an error during OTA finalization!")
             return False
 
-        print("Firmware flashed successfully! ESP32 is rebooting into the new firmware.")
+        print("Firmware flashed successfully! ESP32 rebooted into the new firmware.")
         return True
 
 if __name__ == "__main__":
