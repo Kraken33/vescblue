@@ -1,0 +1,1095 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Scooter BLE Dashboard</title>
+  <meta name="description" content="Wireless ESP32 VESC Scooter Profile Switcher and Live Telemetry Dashboard" />
+  <meta name="theme-color" content="#090d16" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  
+  <!-- Google Fonts: Inter & Outfit -->
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+
+  <style>
+    :root {
+      --bg-dark: #070a12;
+      --bg-card: rgba(18, 24, 38, 0.7);
+      --bg-card-hover: rgba(28, 38, 60, 0.85);
+      --bg-card-active: rgba(36, 50, 80, 0.95);
+      --border-card: rgba(255, 255, 255, 0.08);
+      --border-card-glow: rgba(0, 242, 254, 0.3);
+      
+      --accent-cyan: #00f2fe;
+      --accent-blue: #4facfe;
+      --accent-purple: #9d4edd;
+      --accent-emerald: #10b981;
+      --accent-amber: #f59e0b;
+      --accent-rose: #f43f5e;
+      
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --text-dim: #64748b;
+
+      --font-ui: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-display: 'Outfit', -apple-system, BlinkMacSystemFont, sans-serif;
+      --font-mono: 'JetBrains Mono', monospace;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      -webkit-tap-highlight-color: transparent;
+      user-select: none;
+    }
+
+    body {
+      background-color: var(--bg-dark);
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(0, 242, 254, 0.12) 0%, transparent 50%),
+        radial-gradient(circle at 100% 100%, rgba(157, 78, 221, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.06) 0%, transparent 40%);
+      background-attachment: fixed;
+      color: var(--text-main);
+      font-family: var(--font-ui);
+      min-height: 100vh;
+      min-height: 100dvh;
+      display: flex;
+      flex-direction: column;
+      padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 20px) 16px;
+      overflow-x: hidden;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      flex: 1;
+    }
+
+    /* Header Bar */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 16px;
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      margin-top: 4px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand-icon {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, var(--accent-cyan), var(--accent-purple));
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
+    }
+
+    .brand-icon svg {
+      width: 18px;
+      height: 18px;
+      fill: #090d16;
+    }
+
+    .brand-text h1 {
+      font-family: var(--font-display);
+      font-size: 17px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      line-height: 1.1;
+      background: linear-gradient(120deg, #ffffff, #c7d2fe);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .brand-text p {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+
+    /* Connect Button */
+    .btn-connect {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 14px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 700;
+      font-family: var(--font-display);
+      border: 1px solid rgba(0, 242, 254, 0.3);
+      background: rgba(0, 242, 254, 0.12);
+      color: var(--accent-cyan);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+
+    .btn-connect:active {
+      transform: scale(0.96);
+    }
+
+    .btn-connect.connected {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.15);
+      color: var(--accent-emerald);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--text-dim);
+      transition: all 0.3s ease;
+    }
+
+    .connected .status-dot {
+      background: var(--accent-emerald);
+      box-shadow: 0 0 10px var(--accent-emerald);
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.3); opacity: 0.7; }
+    }
+
+    /* Speedometer Hero Display */
+    .speedo-hero {
+      position: relative;
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 28px;
+      padding: 24px 20px 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+    }
+
+    .speedo-hero::before {
+      content: "";
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at center, rgba(0, 242, 254, 0.07) 0%, transparent 60%);
+      pointer-events: none;
+    }
+
+    .speed-gauge-wrap {
+      position: relative;
+      width: 210px;
+      height: 125px;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+    }
+
+    .speed-gauge-svg {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 210px;
+      height: 210px;
+      transform: rotate(-90deg);
+    }
+
+    .gauge-bg {
+      fill: none;
+      stroke: rgba(255, 255, 255, 0.07);
+      stroke-width: 14;
+      stroke-linecap: round;
+      stroke-dasharray: 283;
+      stroke-dashoffset: 0;
+    }
+
+    .gauge-fill {
+      fill: none;
+      stroke: url(#cyanGrad);
+      stroke-width: 14;
+      stroke-linecap: round;
+      stroke-dasharray: 283;
+      stroke-dashoffset: 283;
+      transition: stroke-dashoffset 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+    }
+
+    .speed-value-box {
+      z-index: 2;
+      text-align: center;
+      margin-bottom: 2px;
+    }
+
+    .speed-num {
+      font-family: var(--font-display);
+      font-size: 64px;
+      font-weight: 900;
+      line-height: 0.9;
+      letter-spacing: -1.5px;
+      color: #ffffff;
+      text-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+    }
+
+    .speed-unit {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--text-muted);
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      margin-top: 4px;
+    }
+
+    /* Badges row below gauge */
+    .hero-badges {
+      display: flex;
+      gap: 8px;
+      margin-top: 14px;
+      z-index: 2;
+    }
+
+    .badge {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 700;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-card);
+      color: var(--text-muted);
+      transition: all 0.2s ease;
+    }
+
+    .badge.active-brake {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: rgba(244, 63, 94, 0.6);
+      color: var(--accent-rose);
+      box-shadow: 0 0 12px rgba(244, 63, 94, 0.4);
+    }
+
+    .badge.active-kick {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: var(--accent-emerald);
+    }
+
+    /* Section Title */
+    .section-title {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin-left: 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    /* Profile Selector Cards */
+    .profiles-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 12px;
+    }
+
+    .profile-card {
+      position: relative;
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      padding: 16px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      cursor: pointer;
+      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+      overflow: hidden;
+    }
+
+    .profile-card:active {
+      transform: scale(0.96);
+    }
+
+    .profile-card .p-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+
+    .profile-card .p-gear {
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+    }
+
+    .profile-card .p-limit {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .profile-card .p-name {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text-main);
+    }
+
+    .profile-card .p-amps {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    /* Active States for Profiles */
+    .profile-card.active {
+      border-color: var(--card-accent);
+      background: var(--bg-card-active);
+      box-shadow: 0 0 20px var(--card-glow);
+    }
+
+    .profile-card.active .p-gear {
+      color: var(--card-accent);
+    }
+
+    .profile-card[data-gear="1"] {
+      --card-accent: var(--accent-emerald);
+      --card-glow: rgba(16, 185, 129, 0.25);
+    }
+    .profile-card[data-gear="2"] {
+      --card-accent: var(--accent-cyan);
+      --card-glow: rgba(0, 242, 254, 0.25);
+    }
+    .profile-card[data-gear="3"] {
+      --card-accent: var(--accent-amber);
+      --card-glow: rgba(245, 158, 11, 0.25);
+    }
+    .profile-card[data-gear="4"] {
+      --card-accent: var(--accent-rose);
+      --card-glow: rgba(244, 63, 94, 0.35);
+    }
+
+    /* Telemetry Grid */
+    .telem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+    }
+
+    .telem-box {
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      padding: 12px 10px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .telem-label {
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-dim);
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+
+    .telem-val {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .telem-unit {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
+    /* Controls & Quick Actions */
+    .controls-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .control-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .control-label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-main);
+    }
+
+    .control-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+    }
+
+    /* Quick slider */
+    .slider-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .range-input {
+      flex: 1;
+      accent-color: var(--accent-rose);
+      height: 6px;
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.1);
+      outline: none;
+    }
+
+    .slider-val {
+      font-family: var(--font-mono);
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--accent-rose);
+      min-width: 48px;
+      text-align: right;
+    }
+
+    .btn-action-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .btn-secondary {
+      padding: 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: 700;
+      font-family: var(--font-display);
+      border: 1px solid var(--border-card);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-secondary:active {
+      background: rgba(255, 255, 255, 0.1);
+      transform: scale(0.97);
+    }
+
+    /* Console Drawer (collapsible) */
+    details.console-drawer {
+      background: var(--bg-card);
+      border: 1px solid var(--border-card);
+      border-radius: 16px;
+      overflow: hidden;
+    }
+
+    details.console-drawer summary {
+      padding: 12px 16px;
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    details.console-drawer summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .console-body {
+      padding: 12px 16px 16px;
+      border-top: 1px solid var(--border-card);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .console-log {
+      height: 90px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #34d399;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .console-input-row {
+      display: flex;
+      gap: 8px;
+    }
+
+    .console-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      padding: 6px 10px;
+      font-family: var(--font-mono);
+      font-size: 12px;
+      color: #fff;
+      outline: none;
+    }
+
+    .console-input:focus {
+      border-color: var(--accent-cyan);
+    }
+
+    /* Non-Bluetooth Warning Banner */
+    #ble-warning {
+      display: none;
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(157, 78, 221, 0.2));
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      border-radius: 16px;
+      padding: 14px 16px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    #ble-warning strong {
+      color: var(--accent-rose);
+      font-size: 13px;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    #ble-warning a {
+      color: var(--accent-cyan);
+      font-weight: 700;
+      text-decoration: underline;
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--accent-cyan);
+      color: #fff;
+      padding: 10px 20px;
+      border-radius: 30px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 100;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    
+    <!-- Header -->
+    <header>
+      <div class="brand">
+        <div class="brand-icon">
+          <svg viewBox="0 0 24 24">
+            <path d="M7 20h10v-2H7v2zm5-18C8.13 2 5 5.13 5 9c0 2.38 1.19 4.47 3 5.74V17h8v-2.26c1.81-1.27 3-3.36 3-5.74 0-3.87-3.13-7-7-7z"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>SCOOTER BLE</h1>
+          <p id="sub-status">Ready to Connect</p>
+        </div>
+      </div>
+      
+      <button id="btn-ble" class="btn-connect" onclick="toggleBleConnection()">
+        <span class="status-dot"></span>
+        <span id="ble-btn-text">Connect</span>
+      </button>
+    </header>
+
+    <!-- Browser Warning (if Web Bluetooth unsupported, e.g. normal Safari) -->
+    <div id="ble-warning">
+      <strong>⚠️ Web Bluetooth Not Detected</strong>
+      iOS Safari does not support Bluetooth directly. Please open this page in the free <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy Web BLE Browser</a> from the App Store.
+    </div>
+
+    <!-- Speedometer Hero -->
+    <div class="speedo-hero">
+      <div class="speed-gauge-wrap">
+        <svg class="speed-gauge-svg" viewBox="0 0 100 100">
+          <defs>
+            <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#00f2fe" />
+              <stop offset="60%" stop-color="#4facfe" />
+              <stop offset="100%" stop-color="#9d4edd" />
+            </linearGradient>
+          </defs>
+          <!-- 180-deg arc (semi-circle): r=45, circumference ~ 282.7 -->
+          <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
+          <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
+        </svg>
+        
+        <div class="speed-value-box">
+          <div id="disp-speed" class="speed-num">0.0</div>
+          <div class="speed-unit">KM / H</div>
+        </div>
+      </div>
+
+      <div class="hero-badges">
+        <div id="badge-brake" class="badge">
+          <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
+        </div>
+        <div id="badge-kick" class="badge active-kick">
+          <span>⚡</span> <span id="kick-text">ZERO START</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Speed Profile Selector -->
+    <div class="section-title">
+      <span>Speed Profiles</span>
+      <span id="active-profile-label" style="color: var(--accent-cyan);">P1: Eco</span>
+    </div>
+
+    <div class="profiles-grid">
+      <!-- Profile 1: Eco -->
+      <div class="profile-card active" data-gear="1" onclick="selectProfile(1)">
+        <div class="p-header">
+          <span class="p-gear">Gear 1</span>
+          <span class="p-limit">10 <small style="font-size:11px">km/h</small></span>
+        </div>
+        <div class="p-name">Eco Mode</div>
+        <div class="p-amps">Max 25A • Smooth</div>
+      </div>
+
+      <!-- Profile 2: City -->
+      <div class="profile-card" data-gear="2" onclick="selectProfile(2)">
+        <div class="p-header">
+          <span class="p-gear">Gear 2</span>
+          <span class="p-limit">15 <small style="font-size:11px">km/h</small></span>
+        </div>
+        <div class="p-name">City Cruising</div>
+        <div class="p-amps">Max 40A • Agile</div>
+      </div>
+
+      <!-- Profile 3: Drive -->
+      <div class="profile-card" data-gear="3" onclick="selectProfile(3)">
+        <div class="p-header">
+          <span class="p-gear">Gear 3</span>
+          <span class="p-limit">25 <small style="font-size:11px">km/h</small></span>
+        </div>
+        <div class="p-name">Drive (Legal)</div>
+        <div class="p-amps">Max 65A • Dynamic</div>
+      </div>
+
+      <!-- Profile 4: Sport -->
+      <div class="profile-card" data-gear="4" onclick="selectProfile(4)">
+        <div class="p-header">
+          <span class="p-gear">Gear 4</span>
+          <span class="p-limit">40+ <small style="font-size:11px">km/h</small></span>
+        </div>
+        <div class="p-name">Sport / Unlock</div>
+        <div class="p-amps">Max 120A • Full Power</div>
+      </div>
+    </div>
+
+    <!-- Live Telemetry -->
+    <div class="section-title">
+      <span>Telemetry</span>
+    </div>
+
+    <div class="telem-grid">
+      <div class="telem-box">
+        <span class="telem-label">Battery</span>
+        <span id="disp-voltage" class="telem-val">--</span>
+        <span class="telem-unit">Volts</span>
+      </div>
+      <div class="telem-box">
+        <span class="telem-label">Target</span>
+        <span id="disp-current" class="telem-val">0.0</span>
+        <span class="telem-unit">Amps</span>
+      </div>
+      <div class="telem-box">
+        <span class="telem-label">Throttle</span>
+        <span id="disp-throttle" class="telem-val">--</span>
+        <span class="telem-unit">ADC Raw</span>
+      </div>
+    </div>
+
+    <!-- Tuning & Quick Controls -->
+    <div class="section-title">
+      <span>Brake & Tuning</span>
+    </div>
+
+    <div class="controls-card">
+      <div>
+        <div class="control-row">
+          <span class="control-label">E-Brake Strength</span>
+          <span id="brake-amp-val" class="slider-val">25.0 A</span>
+        </div>
+        <div class="control-sub">Regenerative braking current</div>
+      </div>
+
+      <div class="slider-wrap">
+        <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
+      </div>
+
+      <div class="btn-action-row">
+        <button class="btn-secondary" onclick="toggleKickStart()">
+          <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
+        </button>
+        <button class="btn-secondary" onclick="sendCmd('S')">
+          <span>📡</span> Refresh Status
+        </button>
+      </div>
+    </div>
+
+    <!-- Console Drawer -->
+    <details class="console-drawer">
+      <summary>
+        <span>🖥️ Live Console & Custom Command</span>
+        <span style="font-size: 10px;">▼</span>
+      </summary>
+      <div class="console-body">
+        <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
+        <div class="console-input-row">
+          <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, BC 30, R, ?" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
+          <button class="btn-secondary" style="padding: 6px 14px;" onclick="sendCustomCmd()">Send</button>
+        </div>
+      </div>
+    </details>
+
+  </div>
+
+  <!-- Toast Notification -->
+  <div id="toast" class="toast">Command Sent</div>
+
+  <script>
+    // =========================================================================
+    // BLE Configuration & State
+    // =========================================================================
+    const BLE_SVC_UUID     = "6e400001-b5a3-f393-e0a9-e50e24dcca9e";
+    const BLE_CONSOLE_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e";
+
+    let bleDevice = null;
+    let bleServer = null;
+    let bleCharacteristic = null;
+    let isConnected = false;
+    let currentActiveGear = 1;
+    let isZeroStart = true;
+
+    // Check Web Bluetooth support
+    window.addEventListener('DOMContentLoaded', () => {
+      if (!navigator.bluetooth) {
+        document.getElementById('ble-warning').style.display = 'block';
+      }
+    });
+
+    // =========================================================================
+    // Web Bluetooth Connection
+    // =========================================================================
+    async function toggleBleConnection() {
+      if (isConnected) {
+        disconnectBle();
+      } else {
+        await connectBle();
+      }
+    }
+
+    async function connectBle() {
+      const btn = document.getElementById('btn-ble');
+      const btnText = document.getElementById('ble-btn-text');
+      const subStatus = document.getElementById('sub-status');
+      
+      try {
+        btnText.textContent = "Scanning...";
+        subStatus.textContent = "Selecting Scooter-ESP32...";
+
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: 'Scooter-ESP32' }],
+          optionalServices: [BLE_SVC_UUID]
+        });
+
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+
+        btnText.textContent = "Connecting...";
+        bleServer = await bleDevice.gatt.connect();
+
+        const service = await bleServer.getPrimaryService(BLE_SVC_UUID);
+        bleCharacteristic = await service.getCharacteristic(BLE_CONSOLE_UUID);
+
+        // Start Notifications
+        await bleCharacteristic.startNotifications();
+        bleCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
+
+        isConnected = true;
+        btn.classList.add('connected');
+        btnText.textContent = "Connected";
+        subStatus.textContent = "Scooter-ESP32 Online";
+        showToast("Connected to Scooter-ESP32!");
+        logConsole("[BLE] Connected & Subscribed to telemetry stream.");
+
+        // Query initial status
+        setTimeout(() => sendCmd("S"), 300);
+
+      } catch (error) {
+        console.error("BLE Connect Error:", error);
+        btn.classList.remove('connected');
+        btnText.textContent = "Connect";
+        subStatus.textContent = "Connection Failed";
+        if (error.name !== 'NotFoundError') {
+          showToast("Connection Error: " + error.message);
+        }
+      }
+    }
+
+    function disconnectBle() {
+      if (bleDevice && bleDevice.gatt.connected) {
+        bleDevice.gatt.disconnect();
+      }
+      onDisconnected();
+    }
+
+    function onDisconnected() {
+      isConnected = false;
+      const btn = document.getElementById('btn-ble');
+      btn.classList.remove('connected');
+      document.getElementById('ble-btn-text').textContent = "Connect";
+      document.getElementById('sub-status').textContent = "Disconnected";
+      showToast("Disconnected from Scooter");
+      logConsole("[BLE] Disconnected.");
+    }
+
+    // =========================================================================
+    // BLE Notification Stream Parser
+    // =========================================================================
+    const textDecoder = new TextDecoder('utf-8');
+
+    function handleNotifications(event) {
+      const val = textDecoder.decode(event.target.value);
+      logConsole(val);
+      parseTelemetry(val);
+    }
+
+    function parseTelemetry(str) {
+      // Stream format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
+      const spdMatch = str.match(/SPD=([\d.]+)/);
+      const gearMatch = str.match(/G=(\d+)/);
+      const sMatch = str.match(/S=(\d+)/);
+      const vMatch = str.match(/V=([\d.]+)/);
+      const rawMatch = str.match(/RAW=(\d+)/);
+      const brkMatch = str.match(/BRK=(\d+)/);
+      const ampMatch = str.match(/AMP=([\d.]+)/);
+      const bcMatch = str.match(/BC=([\d.]+)A/);
+      const kickMatch = str.match(/KICK=(\w+)/);
+
+      if (spdMatch) {
+        const speed = parseFloat(spdMatch[1]);
+        updateSpeedGauge(speed);
+      }
+
+      if (vMatch) {
+        document.getElementById('disp-voltage').textContent = parseFloat(vMatch[1]).toFixed(1);
+      }
+
+      if (ampMatch) {
+        document.getElementById('disp-current').textContent = parseFloat(ampMatch[1]).toFixed(1);
+      }
+
+      if (rawMatch) {
+        document.getElementById('disp-throttle').textContent = rawMatch[1];
+      }
+
+      if (brkMatch) {
+        const isBraking = brkMatch[1] === "1";
+        const badge = document.getElementById('badge-brake');
+        const text = document.getElementById('brake-text');
+        if (isBraking) {
+          badge.classList.add('active-brake');
+          text.textContent = "BRAKING";
+        } else {
+          badge.classList.remove('active-brake');
+          text.textContent = "BRAKE OFF";
+        }
+      }
+
+      if (gearMatch) {
+        let g = parseInt(gearMatch[1], 10);
+        let s = sMatch ? parseInt(sMatch[1], 10) : 0;
+        if (g === 3 && s === 1) g = 4; // S-Mode is Profile 4
+        setActiveProfileCard(g);
+      }
+
+      if (bcMatch) {
+        const bc = parseFloat(bcMatch[1]);
+        document.getElementById('brake-slider').value = bc;
+        document.getElementById('brake-amp-val').textContent = bc.toFixed(1) + " A";
+      }
+
+      if (kickMatch) {
+        const isHeld = kickMatch[1] === "HELD";
+        const badge = document.getElementById('badge-kick');
+        const text = document.getElementById('kick-text');
+        if (isHeld) {
+          badge.classList.remove('active-kick');
+          text.textContent = "PUSH TO START";
+        } else {
+          badge.classList.add('active-kick');
+          text.textContent = "ZERO START";
+        }
+      }
+    }
+
+    // =========================================================================
+    // UI Updates
+    // =========================================================================
+    function updateSpeedGauge(speed) {
+      document.getElementById('disp-speed').textContent = speed.toFixed(1);
+      
+      // Arc math: Max speed 45 km/h -> maps to dashoffset 283 (0 km/h) down to 141 (half)
+      const maxSpeed = 45.0;
+      const ratio = Math.min(Math.max(speed / maxSpeed, 0), 1);
+      // dashoffset ranges from 283 (0%) to 141.5 (100% of 180-deg arc)
+      const offset = 283 - (ratio * 141.5);
+      document.getElementById('gauge-bar').style.strokeDashoffset = offset;
+    }
+
+    function setActiveProfileCard(gear) {
+      currentActiveGear = gear;
+      document.querySelectorAll('.profile-card').forEach(card => {
+        card.classList.toggle('active', parseInt(card.dataset.gear, 10) === gear);
+      });
+      const names = { 1: "P1: Eco (10 km/h)", 2: "P2: City (15 km/h)", 3: "P3: Drive (25 km/h)", 4: "P4: Sport (40+ km/h)" };
+      document.getElementById('active-profile-label').textContent = names[gear] || `Gear ${gear}`;
+    }
+
+    function updateBrakeSlider(val) {
+      document.getElementById('brake-amp-val').textContent = parseFloat(val).toFixed(1) + " A";
+    }
+
+    // =========================================================================
+    // Outgoing BLE Commands
+    // =========================================================================
+    const textEncoder = new TextEncoder();
+
+    async function sendCmd(cmdStr) {
+      if (!bleCharacteristic) {
+        showToast("Not connected to scooter");
+        return;
+      }
+      try {
+        const data = textEncoder.encode(cmdStr);
+        await bleCharacteristic.writeValueWithResponse(data);
+        showToast(`Sent: ${cmdStr}`);
+        logConsole(`[TX] ${cmdStr}`);
+        if (navigator.vibrate) navigator.vibrate(25);
+      } catch (e) {
+        console.error("Write error:", e);
+        showToast("Send failed: " + e.message);
+      }
+    }
+
+    function selectProfile(gear) {
+      setActiveProfileCard(gear);
+      sendCmd(`P ${gear}`);
+    }
+
+    function sendBrakeAmps(val) {
+      sendCmd(`BC ${val}`);
+    }
+
+    function toggleKickStart() {
+      isZeroStart = !isZeroStart;
+      const btnText = document.getElementById('btn-kick-text');
+      if (isZeroStart) {
+        sendCmd('K 0');
+        btnText.textContent = "Zero Start: ON";
+      } else {
+        sendCmd('K 400');
+        btnText.textContent = "Push-to-Start: ON";
+      }
+    }
+
+    function sendCustomCmd() {
+      const input = document.getElementById('custom-cmd');
+      const val = input.value.trim();
+      if (val) {
+        sendCmd(val);
+        input.value = '';
+      }
+    }
+
+    function logConsole(msg) {
+      const log = document.getElementById('console-output');
+      log.textContent = (log.textContent.length > 2000 ? log.textContent.slice(-1500) : log.textContent) + "\n" + msg;
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 2200);
+    }
+  </script>
+</body>
+</html>
