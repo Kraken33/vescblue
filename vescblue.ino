@@ -152,6 +152,12 @@ bool lastDebouncedBrakeState = false;
 bool lastSentBrakeState = false;
 unsigned long lastBrakeStateChange = 0;
 
+// Anti-theft Electronic Motor Lock (Defaults to locked on boot)
+bool isLocked = true;
+bool autoLockOnBoot = true;
+unsigned long lastBrakeTapTime = 0;
+int brakeTapCount = 0;
+
 float targetAmps = 0.0f;
 float targetBrakeAmps = 0.0f;
 unsigned long lastMotorCmdTime = 0;
@@ -295,6 +301,38 @@ void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
     sPayload[0] = 34; // COMM_FORWARD_CAN
     sPayload[1] = slaveCanId;
     sPayload[2] = 7;  // COMM_SET_CURRENT_BRAKE
+    sPayload[3] = (uint8_t)((slaveMilliAmps >> 24) & 0xFF);
+    sPayload[4] = (uint8_t)((slaveMilliAmps >> 16) & 0xFF);
+    sPayload[5] = (uint8_t)((slaveMilliAmps >> 8) & 0xFF);
+    sPayload[6] = (uint8_t)(slaveMilliAmps & 0xFF);
+    uint16_t sCrc = crc16_vesc(sPayload, 7);
+    uint8_t sFrame[12] = {0x02, 7, sPayload[0], sPayload[1], sPayload[2], sPayload[3], sPayload[4], sPayload[5], sPayload[6],
+                          (uint8_t)(sCrc >> 8), (uint8_t)(sCrc & 0xFF), 0x03};
+    VescSerial.write(sFrame, 12);
+  }
+}
+
+// Fast non-blocking Handbrake command sender (COMM_SET_HANDBRAKE = 8)
+// Holds rotor position and resists wheel rotation even at 0 RPM
+void sendDualHandbrake(float masterAmps, float slaveAmps) {
+  int32_t masterMilliAmps = (int32_t)(masterAmps * 1000.0f);
+  uint8_t mPayload[5];
+  mPayload[0] = 8; // COMM_SET_HANDBRAKE
+  mPayload[1] = (uint8_t)((masterMilliAmps >> 24) & 0xFF);
+  mPayload[2] = (uint8_t)((masterMilliAmps >> 16) & 0xFF);
+  mPayload[3] = (uint8_t)((masterMilliAmps >> 8) & 0xFF);
+  mPayload[4] = (uint8_t)(masterMilliAmps & 0xFF);
+  uint16_t mCrc = crc16_vesc(mPayload, 5);
+  uint8_t mFrame[10] = {0x02, 5, mPayload[0], mPayload[1], mPayload[2], mPayload[3], mPayload[4],
+                        (uint8_t)(mCrc >> 8), (uint8_t)(mCrc & 0xFF), 0x03};
+  VescSerial.write(mFrame, 10);
+
+  if (slaveCanId > 0) {
+    int32_t slaveMilliAmps = (int32_t)(slaveAmps * 1000.0f);
+    uint8_t sPayload[7];
+    sPayload[0] = 34; // COMM_FORWARD_CAN
+    sPayload[1] = slaveCanId;
+    sPayload[2] = 8;  // COMM_SET_HANDBRAKE
     sPayload[3] = (uint8_t)((slaveMilliAmps >> 24) & 0xFF);
     sPayload[4] = (uint8_t)((slaveMilliAmps >> 16) & 0xFF);
     sPayload[5] = (uint8_t)((slaveMilliAmps >> 8) & 0xFF);
@@ -530,13 +568,24 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[220];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[240];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h LOCK=%d AUTOLOCK=%d BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
-             digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
+             isLocked ? 1 : 0, autoLockOnBoot ? 1 : 0, userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
+  } else if (cmd == "LOCK" || cmd == "L 1" || cmd == "L") {
+    isLocked = true;
+    blePushLine("LOCKED: Motors immobilized & throttle disabled");
+  } else if (cmd == "UNLOCK" || cmd == "UNLK" || cmd == "L 0" || cmd == "U") {
+    isLocked = false;
+    blePushLine("UNLOCKED: Ready to ride");
+  } else if (cmd.startsWith("AUTOLOCK ")) {
+    int al = cmd.substring(9).toInt();
+    autoLockOnBoot = (al != 0);
+    prefs.putBool("auto_lock", autoLockOnBoot);
+    blePushLine("AUTOLOCK set to " + String(autoLockOnBoot ? "ON (locks on boot)" : "OFF"));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
@@ -644,7 +693,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+    blePushLine("LOCK / UNLOCK | AUTOLOCK [0/1] | S status | P [1-4] prof | G [1-4] gear | BC [amps] brake | CAN [id] | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -742,6 +791,8 @@ void setup() {
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
   userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
   slaveCanId = prefs.getUChar("can_slave", 61);      // Default CAN ID 61
+  autoLockOnBoot = prefs.getBool("auto_lock", true); // Default Auto-Lock on boot (Anti-theft)
+  isLocked = autoLockOnBoot;
 
   // Set internal pullup/pulldown on both candidate brake pins (19 and 21)
   pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
@@ -806,20 +857,35 @@ void loop() {
     lastSentBrakeState = debouncedBrakeState;
   }
 
+  // Backup physical unlock: 5 quick brake lever clicks within 2.5 seconds
+  if (debouncedBrakeState && !lastDebouncedBrakeState) {
+    if (now - lastBrakeTapTime < 500) {
+      brakeTapCount++;
+      if (brakeTapCount >= 5) {
+        isLocked = !isLocked;
+        brakeTapCount = 0;
+        blePushLine(isLocked ? "LOCKED (lever combo)" : "UNLOCKED (lever combo)");
+      }
+    } else {
+      brakeTapCount = 1;
+    }
+    lastBrakeTapTime = now;
+  }
+
   // 5. Update Display UART (Non-blocking)
   processDisplayUart(vehicleSpeedMps);
 
   // 6. INSTANT ZERO-LATENCY Throttle Calculation
   float rawRatio = 0.0f;
-  if (currentRawThrottle > THROTTLE_MIN_RAW) {
+  if (!isLocked && currentRawThrottle > THROTTLE_MIN_RAW) {
     rawRatio = (currentRawThrottle - THROTTLE_MIN_RAW) /
                (float)(THROTTLE_MAX_RAW - THROTTLE_MIN_RAW);
     rawRatio = constrain(rawRatio, 0.0f, 1.0f);
   } else {
-    rawRatio = 0.0f; // Instant cutoff when below deadband!
+    rawRatio = 0.0f; // Instant cutoff when below deadband or locked!
   }
 
-  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & full authority braking
+  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & anti-theft lock
   if (now - lastMotorCmdTime >= 20) {
     lastMotorCmdTime = now;
 
@@ -827,7 +893,18 @@ void loop() {
     bool brakeJustReleased = (lastDebouncedBrakeState && !debouncedBrakeState);
     lastDebouncedBrakeState = debouncedBrakeState;
 
-    if (kickBlocked && !debouncedBrakeState) {
+    if (isLocked) {
+      targetAmps = 0.0f;
+      targetBrakeAmps = userBrakeAmps;
+      // Active motor resistance / immobilization
+      if (fabs(vescRpm57) > 30.0f) {
+        // Wheel is turning -> apply heavy regen braking resistance
+        sendDualBrakeCurrent(userBrakeAmps, userBrakeAmps);
+      } else {
+        // Wheel at standstill -> apply active handbrake holding torque
+        sendDualHandbrake(userBrakeAmps, userBrakeAmps);
+      }
+    } else if (kickBlocked && !debouncedBrakeState) {
       targetAmps = 0.0f;
       targetBrakeAmps = 0.0f;
       sendDualCurrent(0.0f, 0.0f);
@@ -862,11 +939,11 @@ void loop() {
   // 8. BLE notify live line at 5 Hz
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[160];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s",
+    char buf[170];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s LOCK=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL");
+             targetAmps, kickBlocked ? "HELD" : "ROLL", isLocked ? 1 : 0);
     blePushLine(String(buf));
   }
 

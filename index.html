@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Scooter BLE Dashboard</title>
-  <meta name="description" content="Wireless ESP32 VESC Scooter Profile Switcher and Live Telemetry Dashboard" />
-  <meta name="theme-color" content="#090d16" />
+  <title>Scooter BLE Dashboard & Anti-Theft</title>
+  <meta name="description" content="Wireless ESP32 VESC Scooter Profile Switcher, Anti-Theft Motor Lock, and Live Telemetry Dashboard" />
+  <meta name="theme-color" content="#070a12" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   
@@ -21,7 +21,6 @@
       --bg-card-hover: rgba(28, 38, 60, 0.85);
       --bg-card-active: rgba(36, 50, 80, 0.95);
       --border-card: rgba(255, 255, 255, 0.08);
-      --border-card-glow: rgba(0, 242, 254, 0.3);
       
       --accent-cyan: #00f2fe;
       --accent-blue: #4facfe;
@@ -62,6 +61,14 @@
       flex-direction: column;
       padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 20px) 16px;
       overflow-x: hidden;
+      transition: background 0.4s ease;
+    }
+
+    body.locked-mode {
+      background-image: 
+        radial-gradient(circle at 50% 0%, rgba(244, 63, 94, 0.18) 0%, transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(244, 63, 94, 0.08) 0%, transparent 40%),
+        radial-gradient(circle at 0% 100%, rgba(15, 23, 42, 0.8) 0%, transparent 40%);
     }
 
     .container {
@@ -70,7 +77,7 @@
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
       flex: 1;
     }
 
@@ -103,6 +110,12 @@
       align-items: center;
       justify-content: center;
       box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
+      transition: all 0.3s ease;
+    }
+
+    body.locked-mode .brand-icon {
+      background: linear-gradient(135deg, var(--accent-rose), #991b1b);
+      box-shadow: 0 4px 12px rgba(244, 63, 94, 0.4);
     }
 
     .brand-icon svg {
@@ -174,6 +187,133 @@
       50% { transform: scale(1.3); opacity: 0.7; }
     }
 
+    /* Non-Bluetooth Warning Banner */
+    #ble-warning {
+      display: none;
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(157, 78, 221, 0.2));
+      border: 1px solid rgba(244, 63, 94, 0.4);
+      border-radius: 16px;
+      padding: 14px 16px;
+      font-size: 12px;
+      line-height: 1.5;
+    }
+
+    #ble-warning strong {
+      color: var(--accent-rose);
+      font-size: 13px;
+      display: block;
+      margin-bottom: 4px;
+    }
+
+    #ble-warning a {
+      color: var(--accent-cyan);
+      font-weight: 700;
+      text-decoration: underline;
+    }
+
+    /* Anti-Theft Lock Card */
+    .lock-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 24px;
+      padding: 16px 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
+    }
+
+    .lock-card.is-locked {
+      background: rgba(30, 10, 20, 0.85);
+      border-color: rgba(244, 63, 94, 0.5);
+      box-shadow: 0 0 30px rgba(244, 63, 94, 0.25);
+    }
+
+    .lock-info-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .lock-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .lock-icon-box {
+      width: 44px;
+      height: 44px;
+      border-radius: 14px;
+      background: rgba(16, 185, 129, 0.15);
+      border: 1px solid rgba(16, 185, 129, 0.3);
+      color: var(--accent-emerald);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      transition: all 0.3s ease;
+    }
+
+    .lock-card.is-locked .lock-icon-box {
+      background: rgba(244, 63, 94, 0.2);
+      border-color: rgba(244, 63, 94, 0.5);
+      color: var(--accent-rose);
+      box-shadow: 0 0 15px rgba(244, 63, 94, 0.4);
+      animation: pulse-lock 1.5s infinite;
+    }
+
+    @keyframes pulse-lock {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.08); }
+    }
+
+    .lock-text-h {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: #fff;
+    }
+
+    .lock-text-sub {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 1px;
+    }
+
+    .btn-lock-toggle {
+      width: 100%;
+      padding: 12px;
+      border-radius: 14px;
+      font-family: var(--font-display);
+      font-size: 14px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      border: none;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #fff;
+      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+    }
+
+    .btn-lock-toggle:active {
+      transform: scale(0.97);
+    }
+
+    .lock-card.is-locked .btn-lock-toggle {
+      background: linear-gradient(135deg, #ef4444, #dc2626);
+      box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+    }
+
     /* Speedometer Hero Display */
     .speedo-hero {
       position: relative;
@@ -182,24 +322,18 @@
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
       border-radius: 28px;
-      padding: 24px 20px 20px;
+      padding: 22px 20px 18px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       overflow: hidden;
       box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+      transition: border-color 0.3s ease;
     }
 
-    .speedo-hero::before {
-      content: "";
-      position: absolute;
-      top: -50%;
-      left: -50%;
-      width: 200%;
-      height: 200%;
-      background: radial-gradient(circle at center, rgba(0, 242, 254, 0.07) 0%, transparent 60%);
-      pointer-events: none;
+    body.locked-mode .speedo-hero {
+      border-color: rgba(244, 63, 94, 0.3);
     }
 
     .speed-gauge-wrap {
@@ -237,6 +371,10 @@
       stroke-dasharray: 283;
       stroke-dashoffset: 283;
       transition: stroke-dashoffset 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+    }
+
+    body.locked-mode .gauge-fill {
+      stroke: url(#roseGrad);
     }
 
     .speed-value-box {
@@ -527,7 +665,7 @@
       transform: scale(0.97);
     }
 
-    /* Console Drawer (collapsible) */
+    /* Console Drawer */
     details.console-drawer {
       background: var(--bg-card);
       border: 1px solid var(--border-card);
@@ -593,30 +731,6 @@
       border-color: var(--accent-cyan);
     }
 
-    /* Non-Bluetooth Warning Banner */
-    #ble-warning {
-      display: none;
-      background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(157, 78, 221, 0.2));
-      border: 1px solid rgba(244, 63, 94, 0.4);
-      border-radius: 16px;
-      padding: 14px 16px;
-      font-size: 12px;
-      line-height: 1.5;
-    }
-
-    #ble-warning strong {
-      color: var(--accent-rose);
-      font-size: 13px;
-      display: block;
-      margin-bottom: 4px;
-    }
-
-    #ble-warning a {
-      color: var(--accent-cyan);
-      font-weight: 700;
-      text-decoration: underline;
-    }
-
     /* Toast Notification */
     .toast {
       position: fixed;
@@ -666,10 +780,27 @@
       </button>
     </header>
 
-    <!-- Browser Warning (if Web Bluetooth unsupported, e.g. normal Safari) -->
+    <!-- Browser Warning (if Web Bluetooth unsupported) -->
     <div id="ble-warning">
       <strong>⚠️ Web Bluetooth Not Detected</strong>
       iOS Safari does not support Bluetooth directly. Please open this page in the free <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy Web BLE Browser</a> from the App Store.
+    </div>
+
+    <!-- Anti-Theft Lock Card -->
+    <div id="lock-card" class="lock-card is-locked">
+      <div class="lock-info-row">
+        <div class="lock-title-wrap">
+          <div id="lock-icon" class="lock-icon-box">🔒</div>
+          <div>
+            <div id="lock-title" class="lock-text-h">SCOOTER LOCKED</div>
+            <div id="lock-sub" class="lock-text-sub">Motors immobilized • Throttle cut</div>
+          </div>
+        </div>
+      </div>
+      <button id="btn-lock-toggle" class="btn-lock-toggle" onclick="toggleLockState()">
+        <span id="btn-lock-icon">🔓</span>
+        <span id="btn-lock-text">UNLOCK MOTORS</span>
+      </button>
     </div>
 
     <!-- Speedometer Hero -->
@@ -682,8 +813,11 @@
               <stop offset="60%" stop-color="#4facfe" />
               <stop offset="100%" stop-color="#9d4edd" />
             </linearGradient>
+            <linearGradient id="roseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+              <stop offset="0%" stop-color="#f43f5e" />
+              <stop offset="100%" stop-color="#be123c" />
+            </linearGradient>
           </defs>
-          <!-- 180-deg arc (semi-circle): r=45, circumference ~ 282.7 -->
           <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
           <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
         </svg>
@@ -777,7 +911,7 @@
 
     <!-- Tuning & Quick Controls -->
     <div class="section-title">
-      <span>Brake & Tuning</span>
+      <span>Security & Tuning</span>
     </div>
 
     <div class="controls-card">
@@ -794,11 +928,11 @@
       </div>
 
       <div class="btn-action-row">
+        <button id="btn-autolock" class="btn-secondary" onclick="toggleAutoLock()">
+          <span>🛡️</span> <span id="autolock-text">Boot Lock: ON</span>
+        </button>
         <button class="btn-secondary" onclick="toggleKickStart()">
           <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
-        </button>
-        <button class="btn-secondary" onclick="sendCmd('S')">
-          <span>📡</span> Refresh Status
         </button>
       </div>
     </div>
@@ -806,13 +940,13 @@
     <!-- Console Drawer -->
     <details class="console-drawer">
       <summary>
-        <span>🖥️ Live Console & Custom Command</span>
+        <span>🖥️ Live Console & Commands</span>
         <span style="font-size: 10px;">▼</span>
       </summary>
       <div class="console-body">
         <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
         <div class="console-input-row">
-          <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, BC 30, R, ?" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
+          <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. LOCK, UNLOCK, S, BC 30, R" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
           <button class="btn-secondary" style="padding: 6px 14px;" onclick="sendCustomCmd()">Send</button>
         </div>
       </div>
@@ -836,12 +970,15 @@
     let isConnected = false;
     let currentActiveGear = 1;
     let isZeroStart = true;
+    let isLocked = true;
+    let autoLockBoot = true;
 
     // Check Web Bluetooth support
     window.addEventListener('DOMContentLoaded', () => {
       if (!navigator.bluetooth) {
         document.getElementById('ble-warning').style.display = 'block';
       }
+      renderLockUi(true);
     });
 
     // =========================================================================
@@ -931,7 +1068,7 @@
     }
 
     function parseTelemetry(str) {
-      // Stream format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
+      // Stream format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s LOCK=%d
       const spdMatch = str.match(/SPD=([\d.]+)/);
       const gearMatch = str.match(/G=(\d+)/);
       const sMatch = str.match(/S=(\d+)/);
@@ -941,6 +1078,26 @@
       const ampMatch = str.match(/AMP=([\d.]+)/);
       const bcMatch = str.match(/BC=([\d.]+)A/);
       const kickMatch = str.match(/KICK=(\w+)/);
+      const lockMatch = str.match(/LOCK=(\d+)/);
+      const autoLockMatch = str.match(/AUTOLOCK=(\d+)/);
+
+      if (str.includes("LOCKED")) {
+        isLocked = true;
+        renderLockUi(true);
+      } else if (str.includes("UNLOCKED")) {
+        isLocked = false;
+        renderLockUi(false);
+      }
+
+      if (lockMatch) {
+        isLocked = lockMatch[1] === "1";
+        renderLockUi(isLocked);
+      }
+
+      if (autoLockMatch) {
+        autoLockBoot = autoLockMatch[1] === "1";
+        document.getElementById('autolock-text').textContent = `Boot Lock: ${autoLockBoot ? 'ON' : 'OFF'}`;
+      }
 
       if (spdMatch) {
         const speed = parseFloat(spdMatch[1]);
@@ -1000,15 +1157,56 @@
     }
 
     // =========================================================================
-    // UI Updates
+    // UI Updates & Anti-Theft Lock
     // =========================================================================
+    function renderLockUi(locked) {
+      isLocked = locked;
+      const card = document.getElementById('lock-card');
+      const icon = document.getElementById('lock-icon');
+      const title = document.getElementById('lock-title');
+      const sub = document.getElementById('lock-sub');
+      const btnIcon = document.getElementById('btn-lock-icon');
+      const btnText = document.getElementById('btn-lock-text');
+
+      if (locked) {
+        document.body.classList.add('locked-mode');
+        card.classList.add('is-locked');
+        icon.textContent = "🔒";
+        title.textContent = "SCOOTER LOCKED";
+        sub.textContent = "Motors immobilized • Throttle cut";
+        btnIcon.textContent = "🔓";
+        btnText.textContent = "UNLOCK MOTORS";
+      } else {
+        document.body.classList.remove('locked-mode');
+        card.classList.remove('is-locked');
+        icon.textContent = "🛡️";
+        title.textContent = "SCOOTER UNLOCKED";
+        sub.textContent = "System armed • Ready to ride";
+        btnIcon.textContent = "🔒";
+        btnText.textContent = "LOCK MOTORS";
+      }
+    }
+
+    function toggleLockState() {
+      if (isLocked) {
+        sendCmd("UNLOCK");
+        renderLockUi(false);
+      } else {
+        sendCmd("LOCK");
+        renderLockUi(true);
+      }
+    }
+
+    function toggleAutoLock() {
+      autoLockBoot = !autoLockBoot;
+      sendCmd(`AUTOLOCK ${autoLockBoot ? 1 : 0}`);
+      document.getElementById('autolock-text').textContent = `Boot Lock: ${autoLockBoot ? 'ON' : 'OFF'}`;
+    }
+
     function updateSpeedGauge(speed) {
       document.getElementById('disp-speed').textContent = speed.toFixed(1);
-      
-      // Arc math: Max speed 45 km/h -> maps to dashoffset 283 (0 km/h) down to 141 (half)
       const maxSpeed = 45.0;
       const ratio = Math.min(Math.max(speed / maxSpeed, 0), 1);
-      // dashoffset ranges from 283 (0%) to 141.5 (100% of 180-deg arc)
       const offset = 283 - (ratio * 141.5);
       document.getElementById('gauge-bar').style.strokeDashoffset = offset;
     }
@@ -1049,6 +1247,10 @@
     }
 
     function selectProfile(gear) {
+      if (isLocked) {
+        showToast("Scooter is locked! Unlock first.");
+        return;
+      }
       setActiveProfileCard(gear);
       sendCmd(`P ${gear}`);
     }
