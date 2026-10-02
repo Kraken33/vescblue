@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Scooter BLE Dashboard & Anti-Theft</title>
+  <title>Scooter Cockpit Dashboard</title>
   <meta name="description" content="Wireless ESP32 VESC Scooter Profile Switcher, Anti-Theft Motor Lock, and Live Telemetry Dashboard" />
   <meta name="theme-color" content="#070a12" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   
-  <!-- Google Fonts: Inter & Outfit -->
+  <!-- Google Fonts: Inter, Outfit, JetBrains Mono -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
@@ -17,7 +17,7 @@
   <style>
     :root {
       --bg-dark: #070a12;
-      --bg-card: rgba(18, 24, 38, 0.7);
+      --bg-card: rgba(18, 24, 38, 0.72);
       --bg-card-hover: rgba(28, 38, 60, 0.85);
       --bg-card-active: rgba(36, 50, 80, 0.95);
       --border-card: rgba(255, 255, 255, 0.08);
@@ -59,25 +59,26 @@
       min-height: 100dvh;
       display: flex;
       flex-direction: column;
-      padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 20px) 16px;
+      padding: max(12px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left));
       overflow-x: hidden;
       transition: background 0.4s ease;
     }
 
     body.locked-mode {
       background-image: 
-        radial-gradient(circle at 50% 0%, rgba(244, 63, 94, 0.18) 0%, transparent 55%),
-        radial-gradient(circle at 100% 100%, rgba(244, 63, 94, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 0% 100%, rgba(15, 23, 42, 0.8) 0%, transparent 40%);
+        radial-gradient(circle at 50% 0%, rgba(244, 63, 94, 0.22) 0%, transparent 55%),
+        radial-gradient(circle at 100% 100%, rgba(244, 63, 94, 0.1) 0%, transparent 40%),
+        radial-gradient(circle at 0% 100%, rgba(15, 23, 42, 0.85) 0%, transparent 40%);
     }
 
+    /* Base Container */
     .container {
       max-width: 480px;
       margin: 0 auto;
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 12px;
       flex: 1;
     }
 
@@ -86,13 +87,12 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
+      padding: 10px 14px;
       background: var(--bg-card);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 20px;
-      margin-top: 4px;
+      border-radius: 18px;
     }
 
     .brand {
@@ -111,6 +111,7 @@
       justify-content: center;
       box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
       transition: all 0.3s ease;
+      flex-shrink: 0;
     }
 
     body.locked-mode .brand-icon {
@@ -126,7 +127,7 @@
 
     .brand-text h1 {
       font-family: var(--font-display);
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 800;
       letter-spacing: 0.5px;
       line-height: 1.1;
@@ -156,6 +157,7 @@
       color: var(--accent-cyan);
       cursor: pointer;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0;
     }
 
     .btn-connect:active {
@@ -193,16 +195,16 @@
       background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(157, 78, 221, 0.2));
       border: 1px solid rgba(244, 63, 94, 0.4);
       border-radius: 16px;
-      padding: 14px 16px;
+      padding: 12px 14px;
       font-size: 12px;
-      line-height: 1.5;
+      line-height: 1.4;
     }
 
     #ble-warning strong {
       color: var(--accent-rose);
       font-size: 13px;
       display: block;
-      margin-bottom: 4px;
+      margin-bottom: 2px;
     }
 
     #ble-warning a {
@@ -211,17 +213,31 @@
       text-decoration: underline;
     }
 
+    /* Cockpit Main Layout Grid */
+    .cockpit-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+    }
+
+    .cockpit-column {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
     /* Anti-Theft Lock Card */
     .lock-card {
       background: var(--bg-card);
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 24px;
-      padding: 16px 18px;
+      border-radius: 20px;
+      padding: 14px 16px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 10px;
       transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.3);
     }
@@ -229,7 +245,7 @@
     .lock-card.is-locked {
       background: rgba(30, 10, 20, 0.85);
       border-color: rgba(244, 63, 94, 0.5);
-      box-shadow: 0 0 30px rgba(244, 63, 94, 0.25);
+      box-shadow: 0 0 25px rgba(244, 63, 94, 0.25);
     }
 
     .lock-info-row {
@@ -241,21 +257,22 @@
     .lock-title-wrap {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
     }
 
     .lock-icon-box {
-      width: 44px;
-      height: 44px;
-      border-radius: 14px;
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
       background: rgba(16, 185, 129, 0.15);
       border: 1px solid rgba(16, 185, 129, 0.3);
       color: var(--accent-emerald);
       display: flex;
       align-items: center;
       justify-content: center;
-      font-size: 20px;
+      font-size: 18px;
       transition: all 0.3s ease;
+      flex-shrink: 0;
     }
 
     .lock-card.is-locked .lock-icon-box {
@@ -273,7 +290,7 @@
 
     .lock-text-h {
       font-family: var(--font-display);
-      font-size: 15px;
+      font-size: 14px;
       font-weight: 800;
       letter-spacing: 0.5px;
       color: #fff;
@@ -282,15 +299,14 @@
     .lock-text-sub {
       font-size: 11px;
       color: var(--text-muted);
-      margin-top: 1px;
     }
 
     .btn-lock-toggle {
       width: 100%;
-      padding: 12px;
-      border-radius: 14px;
+      padding: 10px;
+      border-radius: 12px;
       font-family: var(--font-display);
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 800;
       letter-spacing: 0.8px;
       border: none;
@@ -298,11 +314,11 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
+      gap: 6px;
       transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
       background: linear-gradient(135deg, #10b981, #059669);
       color: #fff;
-      box-shadow: 0 4px 16px rgba(16, 185, 129, 0.3);
+      box-shadow: 0 4px 14px rgba(16, 185, 129, 0.3);
     }
 
     .btn-lock-toggle:active {
@@ -311,7 +327,7 @@
 
     .lock-card.is-locked .btn-lock-toggle {
       background: linear-gradient(135deg, #ef4444, #dc2626);
-      box-shadow: 0 4px 20px rgba(239, 68, 68, 0.4);
+      box-shadow: 0 4px 18px rgba(239, 68, 68, 0.4);
     }
 
     /* Speedometer Hero Display */
@@ -321,8 +337,8 @@
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 28px;
-      padding: 22px 20px 18px;
+      border-radius: 24px;
+      padding: 18px 16px 14px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -338,8 +354,8 @@
 
     .speed-gauge-wrap {
       position: relative;
-      width: 210px;
-      height: 125px;
+      width: 190px;
+      height: 110px;
       display: flex;
       justify-content: center;
       align-items: flex-end;
@@ -349,15 +365,15 @@
       position: absolute;
       top: 0;
       left: 0;
-      width: 210px;
-      height: 210px;
+      width: 190px;
+      height: 190px;
       transform: rotate(-90deg);
     }
 
     .gauge-bg {
       fill: none;
       stroke: rgba(255, 255, 255, 0.07);
-      stroke-width: 14;
+      stroke-width: 13;
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 0;
@@ -366,7 +382,7 @@
     .gauge-fill {
       fill: none;
       stroke: url(#cyanGrad);
-      stroke-width: 14;
+      stroke-width: 13;
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 283;
@@ -385,7 +401,7 @@
 
     .speed-num {
       font-family: var(--font-display);
-      font-size: 64px;
+      font-size: 56px;
       font-weight: 900;
       line-height: 0.9;
       letter-spacing: -1.5px;
@@ -394,29 +410,31 @@
     }
 
     .speed-unit {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       color: var(--text-muted);
       letter-spacing: 2px;
       text-transform: uppercase;
-      margin-top: 4px;
+      margin-top: 3px;
     }
 
     /* Badges row below gauge */
     .hero-badges {
       display: flex;
       gap: 8px;
-      margin-top: 14px;
+      margin-top: 10px;
       z-index: 2;
+      flex-wrap: wrap;
+      justify-content: center;
     }
 
     .badge {
       display: flex;
       align-items: center;
-      gap: 6px;
-      padding: 5px 12px;
-      border-radius: 20px;
-      font-size: 12px;
+      gap: 5px;
+      padding: 4px 10px;
+      border-radius: 16px;
+      font-size: 11px;
       font-weight: 700;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--border-card);
@@ -440,12 +458,12 @@
     /* Section Title */
     .section-title {
       font-family: var(--font-display);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 1.5px;
+      letter-spacing: 1.2px;
       color: var(--text-dim);
-      margin-left: 6px;
+      margin-left: 4px;
       display: flex;
       align-items: center;
       justify-content: space-between;
@@ -455,7 +473,7 @@
     .profiles-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
+      gap: 10px;
     }
 
     .profile-card {
@@ -464,11 +482,11 @@
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 20px;
-      padding: 16px 14px;
+      border-radius: 18px;
+      padding: 12px 12px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
+      gap: 4px;
       cursor: pointer;
       transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden;
@@ -486,7 +504,7 @@
 
     .profile-card .p-gear {
       font-family: var(--font-display);
-      font-size: 12px;
+      font-size: 11px;
       font-weight: 800;
       letter-spacing: 1px;
       text-transform: uppercase;
@@ -495,13 +513,13 @@
 
     .profile-card .p-limit {
       font-family: var(--font-display);
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 800;
       color: #fff;
     }
 
     .profile-card .p-name {
-      font-size: 14px;
+      font-size: 13px;
       font-weight: 700;
       color: var(--text-main);
     }
@@ -516,7 +534,7 @@
     .profile-card.active {
       border-color: var(--card-accent);
       background: var(--bg-card-active);
-      box-shadow: 0 0 20px var(--card-glow);
+      box-shadow: 0 0 18px var(--card-glow);
     }
 
     .profile-card.active .p-gear {
@@ -544,7 +562,7 @@
     .telem-grid {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
-      gap: 10px;
+      gap: 8px;
     }
 
     .telem-box {
@@ -552,31 +570,31 @@
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 16px;
-      padding: 12px 10px;
+      border-radius: 14px;
+      padding: 10px 8px;
       text-align: center;
       display: flex;
       flex-direction: column;
-      gap: 2px;
+      gap: 1px;
     }
 
     .telem-label {
-      font-size: 10px;
+      font-size: 9px;
       font-weight: 700;
       color: var(--text-dim);
-      letter-spacing: 1px;
+      letter-spacing: 0.8px;
       text-transform: uppercase;
     }
 
     .telem-val {
       font-family: var(--font-display);
-      font-size: 20px;
+      font-size: 18px;
       font-weight: 800;
       color: #fff;
     }
 
     .telem-unit {
-      font-size: 11px;
+      font-size: 10px;
       font-weight: 500;
       color: var(--text-muted);
     }
@@ -587,11 +605,11 @@
       backdrop-filter: blur(20px);
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 20px;
-      padding: 16px;
+      border-radius: 18px;
+      padding: 12px 14px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 10px;
     }
 
     .control-row {
@@ -601,13 +619,13 @@
     }
 
     .control-label {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 600;
       color: var(--text-main);
     }
 
     .control-sub {
-      font-size: 11px;
+      font-size: 10px;
       color: var(--text-muted);
     }
 
@@ -615,7 +633,7 @@
     .slider-wrap {
       display: flex;
       align-items: center;
-      gap: 12px;
+      gap: 10px;
       width: 100%;
     }
 
@@ -630,23 +648,23 @@
 
     .slider-val {
       font-family: var(--font-mono);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       color: var(--accent-rose);
-      min-width: 48px;
+      min-width: 44px;
       text-align: right;
     }
 
     .btn-action-row {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 10px;
+      gap: 8px;
     }
 
     .btn-secondary {
-      padding: 10px;
-      border-radius: 12px;
-      font-size: 12px;
+      padding: 8px 10px;
+      border-radius: 10px;
+      font-size: 11px;
       font-weight: 700;
       font-family: var(--font-display);
       border: 1px solid var(--border-card);
@@ -656,7 +674,7 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 6px;
+      gap: 5px;
       transition: all 0.2s ease;
     }
 
@@ -669,13 +687,13 @@
     details.console-drawer {
       background: var(--bg-card);
       border: 1px solid var(--border-card);
-      border-radius: 16px;
+      border-radius: 14px;
       overflow: hidden;
     }
 
     details.console-drawer summary {
-      padding: 12px 16px;
-      font-size: 12px;
+      padding: 10px 14px;
+      font-size: 11px;
       font-weight: 700;
       color: var(--text-muted);
       cursor: pointer;
@@ -690,20 +708,20 @@
     }
 
     .console-body {
-      padding: 12px 16px 16px;
+      padding: 10px 14px 12px;
       border-top: 1px solid var(--border-card);
       display: flex;
       flex-direction: column;
-      gap: 10px;
+      gap: 8px;
     }
 
     .console-log {
-      height: 90px;
+      height: 70px;
       background: rgba(0, 0, 0, 0.4);
-      border-radius: 10px;
-      padding: 8px 10px;
+      border-radius: 8px;
+      padding: 6px 8px;
       font-family: var(--font-mono);
-      font-size: 11px;
+      font-size: 10px;
       color: #34d399;
       overflow-y: auto;
       white-space: pre-wrap;
@@ -712,7 +730,7 @@
 
     .console-input-row {
       display: flex;
-      gap: 8px;
+      gap: 6px;
     }
 
     .console-input {
@@ -720,9 +738,9 @@
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid var(--border-card);
       border-radius: 8px;
-      padding: 6px 10px;
+      padding: 6px 8px;
       font-family: var(--font-mono);
-      font-size: 12px;
+      font-size: 11px;
       color: #fff;
       outline: none;
     }
@@ -734,15 +752,15 @@
     /* Toast Notification */
     .toast {
       position: fixed;
-      bottom: 24px;
+      bottom: 18px;
       left: 50%;
       transform: translateX(-50%) translateY(100px);
       background: rgba(15, 23, 42, 0.95);
       border: 1px solid var(--accent-cyan);
       color: #fff;
-      padding: 10px 20px;
-      border-radius: 30px;
-      font-size: 13px;
+      padding: 8px 18px;
+      border-radius: 25px;
+      font-size: 12px;
       font-weight: 600;
       box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
       backdrop-filter: blur(10px);
@@ -754,13 +772,160 @@
     .toast.show {
       transform: translateX(-50%) translateY(0);
     }
+
+    /* =========================================================================
+       HORIZONTAL / LANDSCAPE COCKPIT OPTIMIZATION
+       ========================================================================= */
+    @media (orientation: landscape) and (min-width: 560px), (min-width: 820px) {
+      body {
+        padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+        justify-content: center;
+      }
+
+      .container {
+        max-width: 1080px;
+        gap: 10px;
+      }
+
+      header {
+        padding: 8px 14px;
+        border-radius: 14px;
+      }
+
+      .brand-icon {
+        width: 28px;
+        height: 28px;
+      }
+
+      .brand-text h1 {
+        font-size: 15px;
+      }
+
+      .btn-connect {
+        padding: 6px 12px;
+        font-size: 12px;
+      }
+
+      /* 3-Column Cockpit Layout */
+      .cockpit-grid {
+        display: grid;
+        grid-template-columns: 1fr 1.25fr 1fr;
+        gap: 12px;
+        align-items: stretch;
+      }
+
+      .cockpit-column {
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      /* Center Speedometer Wing */
+      .speedo-hero {
+        height: 100%;
+        padding: 12px 14px 10px;
+        justify-content: space-around;
+        border-radius: 20px;
+      }
+
+      .speed-gauge-wrap {
+        width: 180px;
+        height: 95px;
+      }
+
+      .speed-gauge-svg {
+        width: 180px;
+        height: 180px;
+      }
+
+      .speed-num {
+        font-size: 50px;
+      }
+
+      .speed-unit {
+        font-size: 11px;
+      }
+
+      .hero-badges {
+        margin-top: 6px;
+      }
+
+      /* Left & Right Wings */
+      .lock-card {
+        padding: 10px 12px;
+        border-radius: 16px;
+        gap: 8px;
+      }
+
+      .lock-icon-box {
+        width: 32px;
+        height: 32px;
+        font-size: 16px;
+      }
+
+      .lock-text-h {
+        font-size: 13px;
+      }
+
+      .btn-lock-toggle {
+        padding: 8px;
+        font-size: 12px;
+      }
+
+      .controls-card {
+        padding: 10px 12px;
+        border-radius: 16px;
+        gap: 8px;
+      }
+
+      .profiles-grid {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 8px;
+      }
+
+      .profile-card {
+        padding: 8px 10px;
+        border-radius: 14px;
+        gap: 2px;
+      }
+
+      .profile-card .p-limit {
+        font-size: 16px;
+      }
+
+      .profile-card .p-name {
+        font-size: 12px;
+      }
+
+      .profile-card .p-amps {
+        font-size: 10px;
+      }
+
+      .telem-grid {
+        gap: 6px;
+      }
+
+      .telem-box {
+        padding: 8px 6px;
+        border-radius: 12px;
+      }
+
+      .telem-val {
+        font-size: 16px;
+      }
+
+      .console-log {
+        height: 55px;
+      }
+    }
   </style>
 </head>
 <body>
 
   <div class="container">
     
-    <!-- Header -->
+    <!-- Top Compact Header -->
     <header>
       <div class="brand">
         <div class="brand-icon">
@@ -769,7 +934,7 @@
           </svg>
         </div>
         <div class="brand-text">
-          <h1>SCOOTER BLE</h1>
+          <h1>SCOOTER COCKPIT</h1>
           <p id="sub-status">Ready to Connect</p>
         </div>
       </div>
@@ -786,171 +951,179 @@
       iOS Safari does not support Bluetooth directly. Please open this page in the free <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy Web BLE Browser</a> from the App Store.
     </div>
 
-    <!-- Anti-Theft Lock Card -->
-    <div id="lock-card" class="lock-card is-locked">
-      <div class="lock-info-row">
-        <div class="lock-title-wrap">
-          <div id="lock-icon" class="lock-icon-box">🔒</div>
+    <!-- Main Cockpit 3-Column / Responsive Grid -->
+    <div class="cockpit-grid">
+      
+      <!-- LEFT WING: Security, Anti-Theft Lock & Tuning -->
+      <div class="cockpit-column">
+        
+        <!-- Anti-Theft Lock Card -->
+        <div id="lock-card" class="lock-card">
+          <div class="lock-info-row">
+            <div class="lock-title-wrap">
+              <div id="lock-icon" class="lock-icon-box">🛡️</div>
+              <div>
+                <div id="lock-title" class="lock-text-h">SCOOTER UNLOCKED</div>
+                <div id="lock-sub" class="lock-text-sub">System armed • Ready</div>
+              </div>
+            </div>
+          </div>
+          <button id="btn-lock-toggle" class="btn-lock-toggle" onclick="toggleLockState()">
+            <span id="btn-lock-icon">🔒</span>
+            <span id="btn-lock-text">LOCK MOTORS</span>
+          </button>
+        </div>
+
+        <!-- Security & Brake Tuning -->
+        <div class="controls-card">
           <div>
-            <div id="lock-title" class="lock-text-h">SCOOTER LOCKED</div>
-            <div id="lock-sub" class="lock-text-sub">Motors immobilized • Throttle cut</div>
+            <div class="control-row">
+              <span class="control-label">E-Brake Strength</span>
+              <span id="brake-amp-val" class="slider-val">25.0 A</span>
+            </div>
+            <div class="control-sub">Regenerative current</div>
+          </div>
+
+          <div class="slider-wrap">
+            <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
+          </div>
+
+          <div class="btn-action-row">
+            <button id="btn-autolock" class="btn-secondary" onclick="toggleAutoLock()">
+              <span>🛡️</span> <span id="autolock-text">Boot Lock: OFF</span>
+            </button>
+            <button class="btn-secondary" onclick="toggleKickStart()">
+              <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- CENTER WING: Speedometer & Core Telemetry -->
+      <div class="cockpit-column">
+        <div class="speedo-hero">
+          <div class="speed-gauge-wrap">
+            <svg class="speed-gauge-svg" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#00f2fe" />
+                  <stop offset="60%" stop-color="#4facfe" />
+                  <stop offset="100%" stop-color="#9d4edd" />
+                </linearGradient>
+                <linearGradient id="roseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#f43f5e" />
+                  <stop offset="100%" stop-color="#be123c" />
+                </linearGradient>
+              </defs>
+              <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
+              <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
+            </svg>
+            
+            <div class="speed-value-box">
+              <div id="disp-speed" class="speed-num">0.0</div>
+              <div class="speed-unit">KM / H</div>
+            </div>
+          </div>
+
+          <div class="hero-badges">
+            <div id="badge-brake" class="badge">
+              <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
+            </div>
+            <div id="badge-kick" class="badge active-kick">
+              <span>⚡</span> <span id="kick-text">ZERO START</span>
+            </div>
+          </div>
+
+          <!-- Compact Live Telemetry Triplet -->
+          <div class="telem-grid" style="width: 100%; margin-top: 6px;">
+            <div class="telem-box">
+              <span class="telem-label">Battery</span>
+              <span id="disp-voltage" class="telem-val">--</span>
+              <span class="telem-unit">Volts</span>
+            </div>
+            <div class="telem-box">
+              <span class="telem-label">Target</span>
+              <span id="disp-current" class="telem-val">0.0</span>
+              <span class="telem-unit">Amps</span>
+            </div>
+            <div class="telem-box">
+              <span class="telem-label">Throttle</span>
+              <span id="disp-throttle" class="telem-val">--</span>
+              <span class="telem-unit">ADC Raw</span>
+            </div>
           </div>
         </div>
       </div>
-      <button id="btn-lock-toggle" class="btn-lock-toggle" onclick="toggleLockState()">
-        <span id="btn-lock-icon">🔓</span>
-        <span id="btn-lock-text">UNLOCK MOTORS</span>
-      </button>
-    </div>
 
-    <!-- Speedometer Hero -->
-    <div class="speedo-hero">
-      <div class="speed-gauge-wrap">
-        <svg class="speed-gauge-svg" viewBox="0 0 100 100">
-          <defs>
-            <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#00f2fe" />
-              <stop offset="60%" stop-color="#4facfe" />
-              <stop offset="100%" stop-color="#9d4edd" />
-            </linearGradient>
-            <linearGradient id="roseGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#f43f5e" />
-              <stop offset="100%" stop-color="#be123c" />
-            </linearGradient>
-          </defs>
-          <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
-          <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
-        </svg>
+      <!-- RIGHT WING: Speed Profiles & Console -->
+      <div class="cockpit-column">
         
-        <div class="speed-value-box">
-          <div id="disp-speed" class="speed-num">0.0</div>
-          <div class="speed-unit">KM / H</div>
+        <div class="section-title">
+          <span>Speed Profiles</span>
+          <span id="active-profile-label" style="color: var(--accent-cyan); font-size: 11px;">P1: Eco</span>
         </div>
+
+        <div class="profiles-grid">
+          <!-- Profile 1: Eco -->
+          <div class="profile-card active" data-gear="1" onclick="selectProfile(1)">
+            <div class="p-header">
+              <span class="p-gear">Gear 1</span>
+              <span class="p-limit">10 <small style="font-size:10px">km/h</small></span>
+            </div>
+            <div class="p-name">Eco Mode</div>
+            <div class="p-amps">25A • Smooth</div>
+          </div>
+
+          <!-- Profile 2: City -->
+          <div class="profile-card" data-gear="2" onclick="selectProfile(2)">
+            <div class="p-header">
+              <span class="p-gear">Gear 2</span>
+              <span class="p-limit">15 <small style="font-size:10px">km/h</small></span>
+            </div>
+            <div class="p-name">City Cruising</div>
+            <div class="p-amps">40A • Agile</div>
+          </div>
+
+          <!-- Profile 3: Drive -->
+          <div class="profile-card" data-gear="3" onclick="selectProfile(3)">
+            <div class="p-header">
+              <span class="p-gear">Gear 3</span>
+              <span class="p-limit">25 <small style="font-size:10px">km/h</small></span>
+            </div>
+            <div class="p-name">Drive (Legal)</div>
+            <div class="p-amps">65A • Dynamic</div>
+          </div>
+
+          <!-- Profile 4: Sport -->
+          <div class="profile-card" data-gear="4" onclick="selectProfile(4)">
+            <div class="p-header">
+              <span class="p-gear">Gear 4</span>
+              <span class="p-limit">40+ <small style="font-size:10px">km/h</small></span>
+            </div>
+            <div class="p-name">Sport / Unlock</div>
+            <div class="p-amps">120A • Full</div>
+          </div>
+        </div>
+
+        <!-- Collapsible Console Drawer -->
+        <details class="console-drawer">
+          <summary>
+            <span>🖥️ Console & Command</span>
+            <span style="font-size: 10px;">▼</span>
+          </summary>
+          <div class="console-body">
+            <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
+            <div class="console-input-row">
+              <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, LOCK, BC 30, R" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
+              <button class="btn-secondary" style="padding: 4px 10px;" onclick="sendCustomCmd()">Send</button>
+            </div>
+          </div>
+        </details>
+
       </div>
 
-      <div class="hero-badges">
-        <div id="badge-brake" class="badge">
-          <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
-        </div>
-        <div id="badge-kick" class="badge active-kick">
-          <span>⚡</span> <span id="kick-text">ZERO START</span>
-        </div>
-      </div>
     </div>
-
-    <!-- Speed Profile Selector -->
-    <div class="section-title">
-      <span>Speed Profiles</span>
-      <span id="active-profile-label" style="color: var(--accent-cyan);">P1: Eco</span>
-    </div>
-
-    <div class="profiles-grid">
-      <!-- Profile 1: Eco -->
-      <div class="profile-card active" data-gear="1" onclick="selectProfile(1)">
-        <div class="p-header">
-          <span class="p-gear">Gear 1</span>
-          <span class="p-limit">10 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Eco Mode</div>
-        <div class="p-amps">Max 25A • Smooth</div>
-      </div>
-
-      <!-- Profile 2: City -->
-      <div class="profile-card" data-gear="2" onclick="selectProfile(2)">
-        <div class="p-header">
-          <span class="p-gear">Gear 2</span>
-          <span class="p-limit">15 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">City Cruising</div>
-        <div class="p-amps">Max 40A • Agile</div>
-      </div>
-
-      <!-- Profile 3: Drive -->
-      <div class="profile-card" data-gear="3" onclick="selectProfile(3)">
-        <div class="p-header">
-          <span class="p-gear">Gear 3</span>
-          <span class="p-limit">25 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Drive (Legal)</div>
-        <div class="p-amps">Max 65A • Dynamic</div>
-      </div>
-
-      <!-- Profile 4: Sport -->
-      <div class="profile-card" data-gear="4" onclick="selectProfile(4)">
-        <div class="p-header">
-          <span class="p-gear">Gear 4</span>
-          <span class="p-limit">40+ <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Sport / Unlock</div>
-        <div class="p-amps">Max 120A • Full Power</div>
-      </div>
-    </div>
-
-    <!-- Live Telemetry -->
-    <div class="section-title">
-      <span>Telemetry</span>
-    </div>
-
-    <div class="telem-grid">
-      <div class="telem-box">
-        <span class="telem-label">Battery</span>
-        <span id="disp-voltage" class="telem-val">--</span>
-        <span class="telem-unit">Volts</span>
-      </div>
-      <div class="telem-box">
-        <span class="telem-label">Target</span>
-        <span id="disp-current" class="telem-val">0.0</span>
-        <span class="telem-unit">Amps</span>
-      </div>
-      <div class="telem-box">
-        <span class="telem-label">Throttle</span>
-        <span id="disp-throttle" class="telem-val">--</span>
-        <span class="telem-unit">ADC Raw</span>
-      </div>
-    </div>
-
-    <!-- Tuning & Quick Controls -->
-    <div class="section-title">
-      <span>Security & Tuning</span>
-    </div>
-
-    <div class="controls-card">
-      <div>
-        <div class="control-row">
-          <span class="control-label">E-Brake Strength</span>
-          <span id="brake-amp-val" class="slider-val">25.0 A</span>
-        </div>
-        <div class="control-sub">Regenerative braking current</div>
-      </div>
-
-      <div class="slider-wrap">
-        <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
-      </div>
-
-      <div class="btn-action-row">
-        <button id="btn-autolock" class="btn-secondary" onclick="toggleAutoLock()">
-          <span>🛡️</span> <span id="autolock-text">Boot Lock: ON</span>
-        </button>
-        <button class="btn-secondary" onclick="toggleKickStart()">
-          <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Console Drawer -->
-    <details class="console-drawer">
-      <summary>
-        <span>🖥️ Live Console & Commands</span>
-        <span style="font-size: 10px;">▼</span>
-      </summary>
-      <div class="console-body">
-        <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
-        <div class="console-input-row">
-          <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. LOCK, UNLOCK, S, BC 30, R" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
-          <button class="btn-secondary" style="padding: 6px 14px;" onclick="sendCustomCmd()">Send</button>
-        </div>
-      </div>
-    </details>
 
   </div>
 
@@ -970,15 +1143,15 @@
     let isConnected = false;
     let currentActiveGear = 1;
     let isZeroStart = true;
-    let isLocked = true;
-    let autoLockBoot = true;
+    let isLocked = false;
+    let autoLockBoot = false;
 
     // Check Web Bluetooth support
     window.addEventListener('DOMContentLoaded', () => {
       if (!navigator.bluetooth) {
         document.getElementById('ble-warning').style.display = 'block';
       }
-      renderLockUi(true);
+      renderLockUi(false);
     });
 
     // =========================================================================
@@ -1181,7 +1354,7 @@
         card.classList.remove('is-locked');
         icon.textContent = "🛡️";
         title.textContent = "SCOOTER UNLOCKED";
-        sub.textContent = "System armed • Ready to ride";
+        sub.textContent = "System armed • Ready";
         btnIcon.textContent = "🔒";
         btnText.textContent = "LOCK MOTORS";
       }
