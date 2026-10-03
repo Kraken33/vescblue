@@ -1,0 +1,46 @@
+{
+  "expo": {
+    "name": "Scooter BLE",
+    "slug": "scooter-ble",
+    "version": "1.0.0",
+    "orientation": "default",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "backgroundColor": "#070a12",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.kraken.scooterble",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "Allow Scooter BLE to connect and sync telemetry with your electric scooter.",
+        "NSBluetoothPeripheralUsageDescription": "Allow Scooter BLE to communicate with ESP32 scooter controller.",
+        "UIBackgroundModes": [
+          "bluetooth-central"
+        ]
+      }
+    },
+    "android": {
+      "package": "com.kraken.scooterble",
+      "adaptiveIcon": {
+        "backgroundColor": "#070a12",
+        "foregroundImage": "./assets/android-icon-foreground.png"
+      },
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.ACCESS_FINE_LOCATION"
+      ]
+    },
+    "plugins": [
+      [
+        "react-native-ble-plx",
+        {
+          "isBackgroundEnabled": true,
+          "modes": ["peripheral", "central"],
+          "bluetoothAlwaysPermission": "Allow Scooter BLE to connect and sync live telemetry with your electric scooter."
+        }
+      ]
+    ]
+  }
+}
