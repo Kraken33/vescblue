@@ -4,24 +4,22 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
 #include <Update.h>
 #include <Preferences.h>
+#include <nvs_flash.h>
 
 // =========================================================================
 // Hardware & CAN Pin Configuration
 // =========================================================================
 #define THROTTLE_PIN 34
 
-// Brake Sensor Configuration (GPIO 19 single pin default)
-int brakePin = 19;          // Default GPIO 19 (Single brake pin)
+// Default Brake Pin & Dual-pin support (GPIO 19 and GPIO 21)
+int brakePin = 0; // 0 = Dual pin (both 19 and 21), or specify 19 or 21
 bool brakeActiveLow = true; // true = Active LOW (pulls to GND when brake engaged)
-bool brakeEnabled = true;   // Master software toggle to enable/disable e-brake sensor
 
 // Display UART (UART1) on GPIO 22 (RX) and GPIO 23 (TX) at 1200 Baud
-int displayRxPin = 22;
-int displayTxPin = 23;
+#define PIN_DISPLAY_RX 22
+#define PIN_DISPLAY_TX 23
 #define DISPLAY_BAUD 1200
 
 HardwareSerial DisplaySerial(1);
@@ -137,58 +135,24 @@ bool lastLightState = false;
 bool profileSSwitch = false;
 uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
 
-bool vescConfigured = false;
-unsigned long lastProfileSyncTime = 0;
-
 DriveProfile activeProfile = PROFILE_1;
 
 // =========================================================================
-// Battery & Power Telemetry
-// =========================================================================
-float batteryVoltage = 0.0f;       // Actual battery input voltage from VESC (V)
-float batteryCurrent = 0.0f;       // Battery input current from VESC (A)
-float throttleVoltage = 0.0f;      // Analog throttle voltage (0.0 - 3.3V)
-int currentRawThrottle = 0;
-
-// =========================================================================
-// Garmin Watch Proximity & Anti-Theft Lock
-// =========================================================================
-bool garminLockEnabled = false;       // Master toggle for Garmin proximity auto-lock
-String garminTargetMac = "";          // Target Garmin BLE MAC (e.g. "AA:BB:CC:DD:EE:FF" or "" for auto)
-String garminTargetName = "";         // Target Garmin device name (e.g. "Forerunner" or "" for auto)
-int garminRssiThreshold = -85;        // Distance sensitivity threshold in dBm (-95 = far, -70 = near)
-int garminTimeoutSeconds = 6;         // Absence timeout before locking (3 - 15s)
-bool isScooterLocked = false;         // Live lock state: disables throttle & locks wheels
-bool manualOverrideUnlocked = false;  // App override toggle (UNLOCK command)
-bool manualLocked = false;            // Explicit manual lock toggle (LOCK command)
-bool garminNear = false;              // Watch detected within RSSI range and recent time
-int lastGarminRssi = -120;            // Live RSSI
-unsigned long lastGarminSeenMs = 0;   // Timestamp of last received Garmin advertisement
-String lastGarminDetectedMac = "";
-String lastGarminDetectedName = "";
-bool garminLearnActive = false;
-unsigned long garminLearnStartTime = 0;
-
 // Throttle & Brake State
+// =========================================================================
 bool testModeActive = false;
 float testVoltage = 1.0f;
 bool testBrakeState = false;
+
+float currentVoltageReading = 0.0f;
+float batteryVoltage = 50.0f; // Battery voltage from VESC telemetry
+int currentRawThrottle = 0;
 
 bool rawBrakePinState = false;
 bool debouncedBrakeState = false;
 bool lastDebouncedBrakeState = false;
 bool lastSentBrakeState = false;
-uint8_t brakeHistory = 0x00;
-unsigned long lastBrakeSampleTime = 0;
-
-// Motor state machine for clean freewheeling & instantaneous brake release
-enum MotorDriveState {
-  STATE_IDLE,
-  STATE_DRIVE,
-  STATE_BRAKE
-};
-MotorDriveState currentMotorState = STATE_IDLE;
-int idleFramesRemaining = 0; // Frames to send 0A before disabling PWM to freewheel
+unsigned long lastBrakeStateChange = 0;
 
 float targetAmps = 0.0f;
 float targetBrakeAmps = 0.0f;
@@ -280,7 +244,7 @@ void sendBrakeFlagToSlave(bool isBraking) {
   VescSerial.write(frame, sizeof(frame));
 }
 
-// Fast non-blocking Current command sender (COMM_SET_CURRENT = 6)
+// Fast non-blocking Current command sender
 void sendDualCurrent(float masterAmps, float slaveAmps) {
   // 1. Send to Master VESC (5 bytes payload)
   int32_t masterMilliAmps = (int32_t)(masterAmps * 1000.0f);
@@ -313,7 +277,7 @@ void sendDualCurrent(float masterAmps, float slaveAmps) {
   }
 }
 
-// Fast non-blocking Brake command sender (COMM_SET_CURRENT_BRAKE = 7)
+// Fast non-blocking Brake command sender
 void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
   int32_t masterMilliAmps = (int32_t)(masterBrakeAmps * 1000.0f);
   uint8_t mPayload[5];
@@ -378,9 +342,10 @@ void processVescIncoming() {
           uint16_t receivedCrc = ((uint16_t)vescRxBuf[2 + payloadLen] << 8) | vescRxBuf[2 + payloadLen + 1];
 
           if (expectedCrc == receivedCrc && vescRxBuf[2] == 4 && payloadLen >= 27) {
-            if (!vescConfigured) {
-              vescConfigured = true;
-              updateActiveProfile();
+            // Unpack Battery Voltage (bytes 0-1 in COMM_GET_VALUES payload)
+            float v_in = ((float)(((uint16_t)vescRxBuf[2] << 8) | vescRxBuf[3])) / 10.0f;
+            if (v_in > 10.0f && v_in < 100.0f) {
+              batteryVoltage = v_in;
             }
 
             // Unpack ERPM (bytes 23-26 in COMM_GET_VALUES payload)
@@ -393,21 +358,6 @@ void processVescIncoming() {
             vehicleSpeedMps = fabs(vescRpm57) * ERPM_TO_MPS;
             vehicleSpeedKmH = fabs(vescRpm57) * ERPM_TO_KMH;
             kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
-
-            // Unpack Input Battery Voltage (bytes 27-28 in COMM_GET_VALUES payload)
-            if (payloadLen >= 29) {
-              int16_t vInRaw = (int16_t)(((uint16_t)vescRxBuf[29] << 8) | (uint16_t)vescRxBuf[30]);
-              batteryVoltage = (float)vInRaw / 10.0f;
-            }
-
-            // Unpack Input Battery Current (bytes 9-12 in COMM_GET_VALUES payload)
-            if (payloadLen >= 13) {
-              int32_t currInRaw = ((int32_t)vescRxBuf[11] << 24) |
-                                  ((int32_t)vescRxBuf[12] << 16) |
-                                  ((int32_t)vescRxBuf[13] << 8)  |
-                                  ((int32_t)vescRxBuf[14]);
-              batteryCurrent = (float)currInRaw / 100.0f;
-            }
           }
         }
         vescRxIdx = 0;
@@ -419,13 +369,11 @@ void processVescIncoming() {
 void updateActiveProfile() {
   if (currentGear == 1) {
     activeProfile = PROFILE_1;
-    profileSSwitch = false;
   } else if (currentGear == 2) {
     activeProfile = profileSSwitch ? PROFILE_S2 : PROFILE_2;
   } else if (currentGear == 3) {
     activeProfile = profileSSwitch ? PROFILE_S3 : PROFILE_3;
   } else if (currentGear == 4) {
-    profileSSwitch = true;
     activeProfile = PROFILE_S3;
   }
   // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both VESCs
@@ -443,8 +391,6 @@ void setGear(int newGear) {
 
   if (currentGear == 1) {
     profileSSwitch = false;
-  } else if (currentGear == 4) {
-    profileSSwitch = true;
   }
 
   updateActiveProfile();
@@ -454,25 +400,23 @@ void setGear(int newGear) {
            currentGear, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps);
   blePushLine(String(gbuf));
 
-  // Push immediate telemetry update line so connected App updates immediately with 0 latency
+  // Push immediate telemetry update so app card updates in real-time
   if (bleClientConnected) {
-    char buf[210];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
+    char buf[180];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d AMP=%.1f KICK=%s",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
-             isScooterLocked ? 1 : 0,
-             (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
-             garminLockEnabled ? 1 : 0);
+             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+             targetAmps, kickBlocked ? "HELD" : "ROLL");
     blePushLine(String(buf));
   }
 }
 
 void handleDisplayRxPacket(const uint8_t *packet) {
+  displayPacketsCount++;
   int rawGear = packet[4];
   bool light = (packet[9] & 0x08) != 0;
 
-  // Map rawGear (5=1, 10=2, 15=3, 20=4, or direct 1..4)
+  // Handle Gear change with Display Priority
   int mappedGear = 1;
   if (rawGear == 5 || rawGear == 1) mappedGear = 1;
   else if (rawGear == 10 || rawGear == 2) mappedGear = 2;
@@ -480,7 +424,6 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   else if (rawGear == 20 || rawGear == 4) mappedGear = 4;
   else mappedGear = constrain(rawGear, 1, 4);
 
-  // Handle Gear change with Display Priority: trigger if raw gear changed OR if scooter gear is out of sync
   if (rawGear != lastRawGear || mappedGear != currentGear) {
     setGear(mappedGear);
     lastRawGear = rawGear;
@@ -496,18 +439,6 @@ void handleDisplayRxPacket(const uint8_t *packet) {
       lastRawGear = 228; // Force re-evaluating active gear profile
       updateActiveProfile();
       blePushLine("SECRET UNLOCK: S-Mode (Sport 40+ km/h) activated!");
-      // Push immediate update so App shows Sport mode
-      if (bleClientConnected) {
-        char buf[210];
-        snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=1 V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
-                 vehicleSpeedKmH, currentGear,
-                 batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-                 targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
-                 isScooterLocked ? 1 : 0,
-                 (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
-                 garminLockEnabled ? 1 : 0);
-        blePushLine(String(buf));
-      }
     }
 
     lastLightState = light;
@@ -564,27 +495,7 @@ void processDisplayUart(float speedMps) {
     displayRxBytes++;
     unsigned long now = millis();
 
-    // Raw hex sniffer (logs packet stream for debugging)
-    static uint8_t rawDbgBuf[16];
-    static int rawDbgIdx = 0;
-    static unsigned long lastDbgPrint = 0;
-    if (rawDbgIdx < 16) {
-      rawDbgBuf[rawDbgIdx++] = b;
-    }
-    if ((rawDbgIdx >= 15 || (rawDbgIdx > 0 && (now - lastDbgPrint > 2000))) && (now - lastDbgPrint > 1500)) {
-      lastDbgPrint = now;
-      char hexStr[80] = {0};
-      int pos = 0;
-      for (int i = 0; i < rawDbgIdx; i++) {
-        pos += snprintf(hexStr + pos, sizeof(hexStr) - pos, "%02X ", rawDbgBuf[i]);
-      }
-      if (bleClientConnected) {
-        blePushLine("DISP_RAW: " + String(hexStr));
-      }
-      rawDbgIdx = 0;
-    }
-
-    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 300) {
+    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 80) {
       displayRxIndex = 0;
     }
     lastDisplayRxByteTime = now;
@@ -593,178 +504,36 @@ void processDisplayUart(float speedMps) {
       if (b == 0x01) {
         displayRxBuffer[displayRxIndex++] = b;
       }
+    } else if (displayRxIndex == 1) {
+      if (b == 0x03) {
+        displayRxBuffer[displayRxIndex++] = b;
+      } else if (b == 0x01) {
+        displayRxBuffer[0] = 0x01;
+        displayRxIndex = 1;
+      } else {
+        displayRxIndex = 0;
+      }
     } else {
       displayRxBuffer[displayRxIndex++] = b;
       if (displayRxIndex >= 15) {
-        uint8_t crc1 = xorCrc(displayRxBuffer, 14);
-        uint8_t crc2 = xorCrc(&displayRxBuffer[1], 13);
-        bool valid = (displayRxBuffer[14] == crc1) || 
-                     (displayRxBuffer[14] == crc2) || 
-                     (displayRxBuffer[0] == 0x01 && displayRxBuffer[1] == 0x03);
-
-        if (valid) {
+        uint8_t expectedCrc = xorCrc(displayRxBuffer, 14);
+        if (displayRxBuffer[14] == expectedCrc) {
           displayPacketsCount++;
           handleDisplayRxPacket(displayRxBuffer);
-          displayRxIndex = 0;
         } else {
           displayCrcFailures++;
-          // Shift buffer by 1 to search for next 0x01 header
-          int nextHeader = -1;
-          for (int i = 1; i < 15; i++) {
-            if (displayRxBuffer[i] == 0x01) {
-              nextHeader = i;
-              break;
-            }
-          }
-          if (nextHeader != -1) {
-            int remaining = 15 - nextHeader;
-            memmove(&displayRxBuffer[0], &displayRxBuffer[nextHeader], remaining);
-            displayRxIndex = remaining;
-          } else {
-            displayRxIndex = 0;
-          }
         }
+        displayRxIndex = 0;
       }
     }
   }
 
-  // Send packet to display every 140ms (matches display.lisp 150ms to prevent E-10 timeout)
+  // Send packet to display every 150ms
   unsigned long now = millis();
-  if (now - lastDisplayTxTime >= 140) {
+  if (now - lastDisplayTxTime >= 150) {
     lastDisplayTxTime = now;
     sendDisplayTxPacket(speedMps);
   }
-}
-
-// =========================================================================
-// Proximity Scanner & Anti-Theft Callbacks (iPhone Proximity Key)
-// =========================================================================
-static bool matchDeviceName(const String &advertisedName, const String &target) {
-  if (advertisedName.length() == 0 || target.length() == 0) return false;
-  String a = advertisedName;
-  String t = target;
-  a.toLowerCase();
-  t.toLowerCase();
-  a.replace("’", "'");
-  t.replace("’", "'");
-  return a.indexOf(t) >= 0;
-}
-
-class GarminScanCallbacks : public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    bool isMatch = false;
-    String devName = "";
-    if (advertisedDevice.haveName()) {
-      devName = String(advertisedDevice.getName().c_str());
-    }
-    String devMac = String(advertisedDevice.getAddress().toString().c_str());
-    devMac.toUpperCase();
-
-    // 1. Target MAC configured
-    if (garminTargetMac.length() > 0 && garminTargetMac != "AUTO") {
-      if (devMac.equalsIgnoreCase(garminTargetMac)) {
-        isMatch = true;
-      }
-    }
-    // 2. Target Name configured (e.g. "Kirill", "iPhone")
-    else if (garminTargetName.length() > 0 && garminTargetName != "AUTO") {
-      if (matchDeviceName(devName, garminTargetName)) {
-        isMatch = true;
-      }
-    }
-    // 3. AUTO Mode: Match "Kirill" or "iPhone" in advertised device name
-    else {
-      if (matchDeviceName(devName, "Kirill") || matchDeviceName(devName, "iPhone")) {
-        isMatch = true;
-      }
-    }
-
-    if (isMatch) {
-      int rssi = advertisedDevice.getRSSI();
-      lastGarminSeenMs = millis();
-      lastGarminRssi = rssi;
-      lastGarminDetectedMac = devMac;
-      if (devName.length() > 0) {
-        lastGarminDetectedName = devName;
-      }
-
-      // If Auto-Learn mode is active, lock onto this phone / device
-      if (garminLearnActive) {
-        garminTargetMac = devMac;
-        if (devName.length() > 0) {
-          garminTargetName = devName;
-        }
-        prefs.putString("garmin_mac", garminTargetMac);
-        prefs.putString("garmin_name", garminTargetName);
-        garminLearnActive = false;
-        blePushLine("KEY:LEARNED MAC=" + garminTargetMac + " NAME=" + garminTargetName);
-      }
-    }
-  }
-};
-
-void garminScanTaskLoop(void *param) {
-  BLEScan *pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new GarminScanCallbacks(), true);
-  pBLEScan->setActiveScan(true);
-  pBLEScan->setInterval(100);
-  pBLEScan->setWindow(80);
-
-  while (true) {
-    if (garminLockEnabled || garminLearnActive) {
-      pBLEScan->start(2, false);
-      pBLEScan->clearResults();
-      vTaskDelay(pdMS_TO_TICKS(100)); // Brief 100ms yield between scans
-
-      if (garminLearnActive && (millis() - garminLearnStartTime > 10000)) {
-        garminLearnActive = false;
-        blePushLine("KEY:LEARN_TIMEOUT");
-      }
-    } else {
-      vTaskDelay(pdMS_TO_TICKS(1000));
-    }
-  }
-}
-
-void updateGarminLockState() {
-  // 1. Explicit Manual Lock takes highest priority
-  if (manualLocked) {
-    isScooterLocked = true;
-    return;
-  }
-
-  // 2. If Proximity Auto-Lock is disabled, scooter is unlocked
-  if (!garminLockEnabled) {
-    isScooterLocked = false;
-    garminNear = true;
-    return;
-  }
-
-  // 3. Proximity Auto-Lock is ENABLED:
-  // If iPhone is actively connected over Web Bluetooth to dashboard, phone is present
-  if (bleClientConnected) {
-    lastGarminSeenMs = millis();
-    garminNear = true;
-    isScooterLocked = false;
-    return;
-  }
-
-  // 4. Proximity Auto-Lock evaluation based on real scan data
-  unsigned long now = millis();
-  unsigned long timeoutMs = (unsigned long)garminTimeoutSeconds * 1000UL;
-  bool recentlySeen = (lastGarminSeenMs > 0) && ((now - lastGarminSeenMs) <= timeoutMs);
-
-  if (recentlySeen) {
-    if (lastGarminRssi >= garminRssiThreshold) {
-      garminNear = true;
-    } else if (lastGarminRssi < (garminRssiThreshold - 5)) {
-      garminNear = false;
-    }
-  } else {
-    garminNear = false;
-  }
-
-  isScooterLocked = !garminNear;
 }
 
 // =========================================================================
@@ -779,35 +548,41 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[280];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h DPKT=%lu DRX=%lu DERR=%lu DGEAR=%d DPIN=%d/%d PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d KERPM=%.0f LOCK=%d GEN=%d GRSSI=%d",
+    char buf[220];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
+             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
-             (unsigned long)displayPacketsCount, (unsigned long)displayRxBytes, (unsigned long)displayCrcFailures,
-             lastRawGear, displayRxPin, displayTxPin,
-             digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId,
-             KICK_RPM_ERPM, isScooterLocked ? 1 : 0, garminLockEnabled ? 1 : 0, (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120);
+             digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
-      setGear(g);
+      if (g == 1) {
+        currentGear = 1;
+        profileSSwitch = false;
+        activeProfile = PROFILE_1;
+      } else if (g == 2) {
+        currentGear = 2;
+        profileSSwitch = false;
+        activeProfile = PROFILE_2;
+      } else if (g == 3) {
+        currentGear = 3;
+        profileSSwitch = false;
+        activeProfile = PROFILE_3;
+      } else if (g == 4) {
+        currentGear = 3;
+        profileSSwitch = true;
+        activeProfile = PROFILE_S3;
+      }
+      sendVescTempProfile(activeProfile.maxErpm, 1.0f);
+      char pbuf[120];
+      snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A)",
+               g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps);
+      blePushLine(String(pbuf));
     } else {
       blePushLine("ERR profile 1..4 (1=10km/h, 2=15km/h, 3=25km/h, 4=40km/h)");
     }
-  } else if (cmd.startsWith("BEN ")) {
-    int en = cmd.substring(4).toInt();
-    brakeEnabled = (en != 0);
-    prefs.putBool("brake_en", brakeEnabled);
-    if (!brakeEnabled) {
-      debouncedBrakeState = false;
-      rawBrakePinState = false;
-      brakeHistory = 0x00;
-      sendBrakeFlagToSlave(false);
-      lastSentBrakeState = false;
-    }
-    blePushLine("BRAKE SENSOR " + String(brakeEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
     if (p == 0 || p == 19 || p == 21 || p == 18 || p == 5 || p == 4) {
@@ -817,23 +592,17 @@ void bleHandleCommand(const String &cmd) {
         pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
         blePushLine("BRAKE PIN set to GPIO " + String(brakePin));
       } else {
-        pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-        pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
         blePushLine("BRAKE PIN set to DUAL (both GPIO 19 and 21)");
       }
     } else {
-      blePushLine("ERR valid pins: 19, 21, 18, 5, 4, 0 (dual)");
+      blePushLine("ERR valid pins: 0 (dual), 19, 21, 18, 5, 4");
     }
   } else if (cmd.startsWith("BPOL ")) {
     int pol = cmd.substring(5).toInt();
     brakeActiveLow = (pol != 0);
     prefs.putBool("brake_low", brakeActiveLow);
-    if (brakePin > 0) {
-      pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    } else {
-      pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-      pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    }
+    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
     blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow ? "Active LOW (GND)" : "Active HIGH (3.3V)"));
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
@@ -853,79 +622,6 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR CAN ID range 0..255 (0=disabled)");
     }
-  } else if (cmd.startsWith("GEN ")) {
-    int en = cmd.substring(4).toInt();
-    garminLockEnabled = (en != 0);
-    prefs.putBool("garmin_en", garminLockEnabled);
-    manualOverrideUnlocked = false;
-    if (!garminLockEnabled && !manualLocked) {
-      isScooterLocked = false;
-    }
-    blePushLine("GARMIN LOCK " + String(garminLockEnabled ? "ENABLED" : "DISABLED"));
-  } else if (cmd.startsWith("GMAC ")) {
-    String mac = cmd.substring(5);
-    mac.trim();
-    mac.toUpperCase();
-    if (mac == "0" || mac == "CLEAR" || mac == "NONE" || mac == "AUTO") {
-      garminTargetMac = "";
-    } else {
-      garminTargetMac = mac;
-    }
-    prefs.putString("garmin_mac", garminTargetMac);
-    blePushLine("GARMIN MAC set to " + (garminTargetMac.length() > 0 ? garminTargetMac : "AUTO"));
-  } else if (cmd.startsWith("GNAME ")) {
-    String gname = cmd.substring(6);
-    gname.trim();
-    if (gname == "0" || gname == "CLEAR" || gname == "NONE" || gname == "AUTO") {
-      garminTargetName = "";
-    } else {
-      garminTargetName = gname;
-    }
-    prefs.putString("garmin_name", garminTargetName);
-    blePushLine("GARMIN NAME set to " + (garminTargetName.length() > 0 ? garminTargetName : "AUTO"));
-  } else if (cmd.startsWith("GRSSI ")) {
-    int r = cmd.substring(6).toInt();
-    if (r >= -110 && r <= -30) {
-      garminRssiThreshold = r;
-      prefs.putInt("garmin_rssi", garminRssiThreshold);
-      blePushLine("GARMIN RSSI set to " + String(garminRssiThreshold) + " dBm");
-    } else {
-      blePushLine("ERR rssi range -110..-30");
-    }
-  } else if (cmd.startsWith("GTO ")) {
-    int to = cmd.substring(4).toInt();
-    if (to >= 2 && to <= 60) {
-      garminTimeoutSeconds = to;
-      prefs.putInt("garmin_to", garminTimeoutSeconds);
-      blePushLine("GARMIN TIMEOUT set to " + String(garminTimeoutSeconds) + " s");
-    } else {
-      blePushLine("ERR timeout range 2..60");
-    }
-  } else if (cmd == "GLEARN") {
-    garminLearnActive = true;
-    garminLearnStartTime = millis();
-    blePushLine("GARMIN AUTO-LEARN ACTIVE (Bring watch close for 10s...)");
-  } else if (cmd == "GLOCK" || cmd == "LOCK") {
-    manualLocked = true;
-    manualOverrideUnlocked = false;
-    isScooterLocked = true;
-    blePushLine("SCOOTER MANUALLY LOCKED");
-  } else if (cmd == "GUNLOCK" || cmd == "UNLOCK") {
-    manualLocked = false;
-    manualOverrideUnlocked = false;
-    isScooterLocked = false;
-    lastGarminSeenMs = millis();
-    blePushLine("SCOOTER MANUALLY UNLOCKED");
-  } else if (cmd == "GARMIN") {
-    char gbuf[220];
-    snprintf(gbuf, sizeof(gbuf), "GARMIN: EN=%d LOCK=%d NEAR=%d RSSI=%d THOLD=%d TO=%ds MAC=%s NAME=%s LAST_MAC=%s LAST_NAME=%s",
-             garminLockEnabled ? 1 : 0, isScooterLocked ? 1 : 0, garminNear ? 1 : 0,
-             (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120,
-             garminRssiThreshold, garminTimeoutSeconds,
-             garminTargetMac.length() > 0 ? garminTargetMac.c_str() : "AUTO",
-             garminTargetName.length() > 0 ? garminTargetName.c_str() : "AUTO",
-             lastGarminDetectedMac.c_str(), lastGarminDetectedName.c_str());
-    blePushLine(String(gbuf));
   } else if (cmd == "T") {
     testModeActive = false;
     blePushLine("TEST off");
@@ -942,9 +638,6 @@ void bleHandleCommand(const String &cmd) {
     if (k >= 0 && k < 5000) {
       KICK_RPM_ERPM = k;
       prefs.putFloat("kick_erpm", KICK_RPM_ERPM);
-      if (KICK_RPM_ERPM == 0.0f) {
-        kickBlocked = false;
-      }
       blePushLine("KICK " + String(KICK_RPM_ERPM, 0));
     } else {
       blePushLine("ERR kick range 0..5000");
@@ -953,53 +646,23 @@ void bleHandleCommand(const String &cmd) {
     sendBrakeFlagToSlave(debouncedBrakeState);
     lastSentBrakeState = debouncedBrakeState;
     blePushLine(String("BRAKE pushed ") + (debouncedBrakeState ? "1" : "0"));
-  } else if (cmd.startsWith("DP ")) {
-    int rx = 22;
-    int tx = 23;
-    if (sscanf(cmd.c_str() + 3, "%d %d", &rx, &tx) == 2) {
-      displayRxPin = rx;
-      displayTxPin = tx;
-      prefs.putInt("disp_rx", displayRxPin);
-      prefs.putInt("disp_tx", displayTxPin);
-      DisplaySerial.end();
-      DisplaySerial.setRxBufferSize(512);
-      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
-      pinMode(displayRxPin, INPUT_PULLUP);
-      gpio_pullup_en((gpio_num_t)displayRxPin);
-      displayRxIndex = 0;
-      displayPacketsCount = 0;
-      displayRxBytes = 0;
-      displayCrcFailures = 0;
-      blePushLine("DISPLAY UART pins set: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
-    } else {
-      blePushLine("ERR format: DP <rx_pin> <tx_pin> (e.g. DP 22 23)");
-    }
   } else if (cmd == "SWAP") {
-    int tmp = displayRxPin;
-    displayRxPin = displayTxPin;
-    displayTxPin = tmp;
-    prefs.putInt("disp_rx", displayRxPin);
-    prefs.putInt("disp_tx", displayTxPin);
+    static bool swapped = false;
+    swapped = !swapped;
     DisplaySerial.end();
-    DisplaySerial.setRxBufferSize(512);
-    DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
-    pinMode(displayRxPin, INPUT_PULLUP);
-    gpio_pullup_en((gpio_num_t)displayRxPin);
-    displayRxIndex = 0;
-    blePushLine("DISPLAY UART swapped & saved: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
-  } else if (cmd == "DISP") {
-    char dbuf[160];
-    snprintf(dbuf, sizeof(dbuf), "DISP: RX_PIN=%d TX_PIN=%d PKTS=%lu BYTES=%lu CRC_FAIL=%lu RAW_G=%d CURR_G=%d S=%d",
-             displayRxPin, displayTxPin, (unsigned long)displayPacketsCount,
-             (unsigned long)displayRxBytes, (unsigned long)displayCrcFailures,
-             lastRawGear, currentGear, profileSSwitch ? 1 : 0);
-    blePushLine(String(dbuf));
+    if (swapped) {
+      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, 23, 22);
+      blePushLine("DISPLAY UART swapped: RX=GPIO 23, TX=GPIO 22");
+    } else {
+      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, 22, 23);
+      blePushLine("DISPLAY UART default: RX=GPIO 22, TX=GPIO 23");
+    }
   } else if (cmd == "R") {
     blePushLine("rebooting");
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | DISP info | DP [rx] [tx] | SWAP pins | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
+    blePushLine("S status | P [1-4] prof | G [1-4] gear | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -1054,19 +717,10 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *) {
-    bleClientConnected = true;
-    lastGarminSeenMs = millis();
-  }
+  void onConnect(BLEServer *) { bleClientConnected = true; }
   void onDisconnect(BLEServer *) {
     bleClientConnected = false;
     bleOtaActive = false;
-    lastGarminSeenMs = 0;
-    lastGarminRssi = -120;
-    garminNear = false;
-    if (garminLockEnabled) {
-      isScooterLocked = true;
-    }
     bleServer->getAdvertising()->start();
   }
 };
@@ -1090,48 +744,31 @@ void bleInit() {
 }
 
 // =========================================================================
+// Setup & Loop
+// =========================================================================
 void setup() {
+  // Display is on UART1 (DisplaySerial) at 1200 Baud (RX=GPIO 22, TX=GPIO 23)
+  DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, PIN_DISPLAY_RX, PIN_DISPLAY_TX);
+
   pinMode(THROTTLE_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(THROTTLE_PIN, ADC_11db);
 
+  // Erase NVS flash once to clear all corrupt keys
+  nvs_flash_erase();
+  nvs_flash_init();
   prefs.begin("scooter", false);
-  // Display UART is permanently wired to GPIO 22 (RX) and GPIO 23 (TX)
-  displayRxPin = 22;
-  displayTxPin = 23;
-  prefs.putInt("disp_rx", 22);
-  prefs.putInt("disp_tx", 23);
-
-  // Display is on UART1 (DisplaySerial) at 1200 Baud (RX=GPIO 22, TX=GPIO 23)
-  DisplaySerial.setRxBufferSize(512);
-  DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
-  pinMode(displayRxPin, INPUT_PULLUP);
-  gpio_pullup_en((gpio_num_t)displayRxPin);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
-  brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
+  brakePin = prefs.getInt("brake_pin", 0);           // Default 0 = Dual pin (both 19 and 21)
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
-  brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
   slaveCanId = prefs.getUChar("can_slave", 61);      // Default CAN ID 61
 
-  garminLockEnabled = prefs.getBool("garmin_en", false);
-  garminTargetMac = prefs.getString("garmin_mac", "");
-  garminTargetName = prefs.getString("garmin_name", "Kirill");
-  garminRssiThreshold = prefs.getInt("garmin_rssi", -85);
-  garminTimeoutSeconds = prefs.getInt("garmin_to", 5);
-
-  // Set internal pullup/pulldown on configured brake pin
-  if (brakePin > 0) {
-    pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  } else if (brakePin == 0) {
-    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  }
+  // Set internal pullup/pulldown on both candidate brake pins (19 and 21)
+  pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
 
   bleInit();
-
-  // Background Garmin BLE proximity scanner task on Core 0
-  xTaskCreatePinnedToCore(garminScanTaskLoop, "garminScanTask", 4096, NULL, 1, NULL, 0);
 
   // UART2 connected to VESC Master at 115200 Baud (RX=16, TX=17)
   VescSerial.begin(115200, SERIAL_8N1, 16, 17);
@@ -1151,41 +788,27 @@ void loop() {
     requestVescTelemetryAsync();
   }
 
-  // 3. Fast Brake Sensor Reading & Hardware Glitch Filter
+  // 3. Fast Brake Sensor Reading (Supports dual pin 19 & 21 or single pin)
   if (testModeActive) {
-    debouncedBrakeState = testBrakeState && brakeEnabled;
+    debouncedBrakeState = testBrakeState;
     currentRawThrottle = (int)((testVoltage / 3.3f) * 4095.0f);
   } else {
-    if (!brakeEnabled) {
-      debouncedBrakeState = false;
-      rawBrakePinState = false;
-      brakeHistory = 0x00;
+    bool rawReading = false;
+    if (brakePin == 0) {
+      // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
+      bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
+      bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
+      rawReading = p19 || p21;
     } else {
-      // Sample brake pin every 4ms into a rolling bit-history
-      if (now - lastBrakeSampleTime >= 4) {
-        lastBrakeSampleTime = now;
-        bool rawReading = false;
-        if (brakePin == 0) {
-          // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
-          bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
-          bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
-          rawReading = p19 || p21;
-        } else if (brakePin > 0) {
-          rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
-        }
+      rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
+    }
 
-        rawBrakePinState = rawReading;
-        brakeHistory = (brakeHistory << 1) | (rawReading ? 1 : 0);
-
-        // Fast activation: 2 consecutive active samples (8ms)
-        if ((brakeHistory & 0x03) == 0x03) {
-          debouncedBrakeState = true;
-        }
-        // Instant guaranteed release: 3 consecutive released samples (12ms)
-        else if ((brakeHistory & 0x07) == 0x00) {
-          debouncedBrakeState = false;
-        }
-      }
+    if (rawReading != rawBrakePinState) {
+      lastBrakeStateChange = now;
+      rawBrakePinState = rawReading;
+    }
+    if ((now - lastBrakeStateChange) > BRAKE_DEBOUNCE_MS) {
+      debouncedBrakeState = rawBrakePinState;
     }
 
     // Fast 4-sample ADC read (takes ~80 microseconds total)
@@ -1196,123 +819,88 @@ void loop() {
     currentRawThrottle = rawSum >> 2;
   }
 
-  throttleVoltage = (currentRawThrottle / 4095.0f) * 3.3f;
-
-  // Update Garmin Proximity & Anti-Theft Lock State
-  updateGarminLockState();
+  currentVoltageReading = (currentRawThrottle / 4095.0f) * 3.3f;
 
   // 4. Push brake flag to Slave VESC immediately on change
   if (debouncedBrakeState != lastSentBrakeState) {
     sendBrakeFlagToSlave(debouncedBrakeState);
     lastSentBrakeState = debouncedBrakeState;
   }
-  lastDebouncedBrakeState = debouncedBrakeState;
 
   // 5. Update Display UART (Non-blocking)
   processDisplayUart(vehicleSpeedMps);
 
   // 6. INSTANT ZERO-LATENCY Throttle Calculation
   float rawRatio = 0.0f;
-  if (!isScooterLocked && currentRawThrottle > THROTTLE_MIN_RAW) {
+  if (currentRawThrottle > THROTTLE_MIN_RAW) {
     rawRatio = (currentRawThrottle - THROTTLE_MIN_RAW) /
                (float)(THROTTLE_MAX_RAW - THROTTLE_MIN_RAW);
     rawRatio = constrain(rawRatio, 0.0f, 1.0f);
   } else {
-    rawRatio = 0.0f; // Instant cutoff when below deadband or when LOCKED!
+    rawRatio = 0.0f; // Instant cutoff when below deadband!
   }
 
-  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & pure freewheel
+  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & full authority braking
   if (now - lastMotorCmdTime >= 20) {
     lastMotorCmdTime = now;
 
-    if (isScooterLocked) {
-      // PROXIMITY ANTI-THEFT LOCK:
-      // Throttle completely disabled!
+    // Detect brake release transition
+    bool brakeJustReleased = (lastDebouncedBrakeState && !debouncedBrakeState);
+    lastDebouncedBrakeState = debouncedBrakeState;
+
+    if (kickBlocked && !debouncedBrakeState) {
       targetAmps = 0.0f;
-      // Wheel Lock: If wheel moves or rolls, apply dual regenerative brake current to lock the wheels!
-      if (vehicleSpeedKmH > 0.1f || fabs(vescRpm57) > 30.0f) {
+      targetBrakeAmps = 0.0f;
+      sendDualCurrent(0.0f, 0.0f);
+    } else if (debouncedBrakeState) {
+      targetAmps = 0.0f;
+
+      if (rawRatio <= 0.0f) {
         targetBrakeAmps = userBrakeAmps;
-        currentMotorState = STATE_BRAKE;
-        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
       } else {
-        // Holding resistance
-        targetBrakeAmps = 5.0f;
-        currentMotorState = STATE_BRAKE;
-        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
+        // Variable braking modulated by throttle (10A to 35A)
+        targetBrakeAmps = MIN_VARIABLE_BRAKE +
+                          (rawRatio * (MAX_VARIABLE_BRAKE - MIN_VARIABLE_BRAKE));
       }
-    } else if (debouncedBrakeState && brakeEnabled) {
-      // Full brake priority: Throttle is completely INACTIVE during braking
-      targetAmps = 0.0f;
-      targetBrakeAmps = userBrakeAmps;
-      currentMotorState = STATE_BRAKE;
-      idleFramesRemaining = 1; // Send 1 clean 0A current release frame on release
       sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
-    } else if (kickBlocked) {
-      targetAmps = 0.0f;
-      targetBrakeAmps = 0.0f;
-      if (currentMotorState != STATE_IDLE || idleFramesRemaining > 0) {
-        if (idleFramesRemaining > 0) idleFramesRemaining--;
-        sendDualCurrent(0.0f, 0.0f);
-        if (idleFramesRemaining == 0) {
-          currentMotorState = STATE_IDLE;
-        }
-      }
-    } else if (rawRatio > 0.01f) {
-      // Accelerating
-      currentMotorState = STATE_DRIVE;
-      idleFramesRemaining = 1;
-      targetBrakeAmps = 0.0f;
-
-      float reqAmps = rawRatio * activeProfile.maxCurrentAmps;
-
-      // Speed Limiter Governor:
-      // Smoothly tapers motor current as vehicle speed approaches the active profile limit
-      float speedLimit = activeProfile.speedLimitKmH;
-      if (speedLimit < 40.0f) {
-        if (vehicleSpeedKmH >= speedLimit) {
-          reqAmps = 0.0f; // Cut driving current at or above speed limit
-        } else if (vehicleSpeedKmH > (speedLimit - 2.0f)) {
-          float scale = (speedLimit - vehicleSpeedKmH) / 2.0f;
-          reqAmps = reqAmps * constrain(scale, 0.0f, 1.0f);
-        }
-      }
-
-      targetAmps = reqAmps;
-      sendDualCurrent(targetAmps, targetAmps);
     } else {
-      // Coasting / Idle (0 throttle, 0 brake)
-      targetAmps = 0.0f;
       targetBrakeAmps = 0.0f;
-      if (currentMotorState != STATE_IDLE || idleFramesRemaining > 0) {
-        if (idleFramesRemaining > 0) idleFramesRemaining--;
-        // Cleanly cancel brake mode and zero out VESC current controller
-        sendDualCurrent(0.0f, 0.0f);
-        if (idleFramesRemaining == 0) {
-          currentMotorState = STATE_IDLE;
-        }
-      }
-      // When STATE_IDLE: DO NOT continuously spam 0A current packets.
-      // This allows VESC to enter true MC_STATE_OFF (freewheel with zero drag)!
-    }
-  }
 
-  // Periodic profile sync (every 3000ms) to ensure VESC RAM settings remain active
-  if (vescConfigured && now - lastProfileSyncTime > 3000) {
-    lastProfileSyncTime = now;
-    sendVescTempProfile(activeProfile.maxErpm, 1.0f);
+      if (brakeJustReleased) {
+        // Clear brake mode on VESC immediately upon release
+        sendDualBrakeCurrent(0.0f, 0.0f);
+        sendDualCurrent(0.0f, 0.0f);
+      } else if (rawRatio > 0.01f) {
+        float reqAmps = rawRatio * activeProfile.maxCurrentAmps;
+
+        // Speed Limiter Governor: smoothly cut power if above profile speed limit
+        float speedLimit = activeProfile.speedLimitKmH;
+        if (speedLimit < 40.0f) {
+          if (vehicleSpeedKmH >= speedLimit) {
+            reqAmps = 0.0f;
+          } else if (vehicleSpeedKmH > (speedLimit - 2.0f)) {
+            float scale = (speedLimit - vehicleSpeedKmH) / 2.0f;
+            reqAmps = reqAmps * constrain(scale, 0.0f, 1.0f);
+          }
+        }
+
+        targetAmps = reqAmps;
+        sendDualCurrent(targetAmps, targetAmps);
+      } else {
+        targetAmps = 0.0f;
+        sendDualCurrent(0.0f, 0.0f); // Freewheel / coasting on release
+      }
+    }
   }
 
   // 8. BLE notify live line at 5 Hz
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[210];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
+    char buf[160];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d AMP=%.1f KICK=%s",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
-             isScooterLocked ? 1 : 0,
-             (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
-             garminLockEnabled ? 1 : 0);
+             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+             targetAmps, kickBlocked ? "HELD" : "ROLL");
     blePushLine(String(buf));
   }
 
