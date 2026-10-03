@@ -4,27 +4,30 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
   <title>Scooter BLE Dashboard</title>
-  <meta name="description" content="Wireless ESP32 VESC Scooter Profile Switcher and Live Telemetry Dashboard" />
-  <meta name="theme-color" content="#090d16" />
+  <meta name="description" content="High-Performance Wireless ESP32 VESC Scooter Profile Switcher and Live Telemetry Dashboard" />
+  <meta name="theme-color" content="#070a12" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   
   <!-- Google Fonts: Inter & Outfit -->
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Outfit:wght@500;600;700;800;900&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet" />
 
   <style>
     :root {
+      /* Solid, high-performance colors without expensive GPU blur filters */
       --bg-dark: #070a12;
-      --bg-card: rgba(18, 24, 38, 0.7);
-      --bg-card-hover: rgba(28, 38, 60, 0.85);
-      --bg-card-active: rgba(36, 50, 80, 0.95);
+      --bg-card: #101626;
+      --bg-card-hover: #162035;
+      --bg-card-active: #1d2b47;
+      
       --border-card: rgba(255, 255, 255, 0.08);
-      --border-card-glow: rgba(0, 242, 254, 0.3);
+      --border-card-bright: rgba(255, 255, 255, 0.16);
+      --border-card-glow: rgba(0, 242, 254, 0.4);
       
       --accent-cyan: #00f2fe;
-      --accent-blue: #4facfe;
+      --accent-blue: #3b82f6;
       --accent-purple: #9d4edd;
       --accent-emerald: #10b981;
       --accent-amber: #f59e0b;
@@ -45,22 +48,28 @@
       padding: 0;
       -webkit-tap-highlight-color: transparent;
       user-select: none;
+      -webkit-user-select: none;
     }
 
-    body {
+    /* Hardware-accelerated base scroll without fixed background repaint cost */
+    html, body {
       background-color: var(--bg-dark);
       background-image: 
-        radial-gradient(circle at 50% 0%, rgba(0, 242, 254, 0.12) 0%, transparent 50%),
-        radial-gradient(circle at 100% 100%, rgba(157, 78, 221, 0.08) 0%, transparent 40%),
-        radial-gradient(circle at 0% 100%, rgba(16, 185, 129, 0.06) 0%, transparent 40%);
-      background-attachment: fixed;
+        radial-gradient(circle at 50% 0%, rgba(0, 242, 254, 0.1) 0%, transparent 60%),
+        radial-gradient(circle at 100% 100%, rgba(157, 78, 221, 0.08) 0%, transparent 50%);
       color: var(--text-main);
       font-family: var(--font-ui);
       min-height: 100vh;
       min-height: 100dvh;
+      overscroll-behavior-y: none;
+      -webkit-font-smoothing: antialiased;
+      touch-action: pan-y;
+    }
+
+    body {
       display: flex;
       flex-direction: column;
-      padding: env(safe-area-inset-top, 16px) 16px env(safe-area-inset-bottom, 20px) 16px;
+      padding: env(safe-area-inset-top, 14px) 14px env(safe-area-inset-bottom, 18px) 14px;
       overflow-x: hidden;
     }
 
@@ -70,8 +79,14 @@
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 16px;
+      gap: 14px;
       flex: 1;
+    }
+
+    /* Fast touch response for all interactive elements */
+    button, .profile-card, summary, input[type="range"] {
+      touch-action: manipulation;
+      cursor: pointer;
     }
 
     /* Header Bar */
@@ -79,13 +94,10 @@
       display: flex;
       align-items: center;
       justify-content: space-between;
-      padding: 12px 16px;
+      padding: 10px 14px;
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 20px;
-      margin-top: 4px;
+      border-radius: 18px;
     }
 
     .brand {
@@ -102,7 +114,8 @@
       display: flex;
       align-items: center;
       justify-content: center;
-      box-shadow: 0 4px 12px rgba(0, 242, 254, 0.3);
+      flex-shrink: 0;
+      box-shadow: 0 2px 10px rgba(0, 242, 254, 0.3);
     }
 
     .brand-icon svg {
@@ -113,7 +126,7 @@
 
     .brand-text h1 {
       font-family: var(--font-display);
-      font-size: 17px;
+      font-size: 16px;
       font-weight: 800;
       letter-spacing: 0.5px;
       line-height: 1.1;
@@ -128,30 +141,33 @@
       font-weight: 500;
     }
 
-    /* Connect Button */
+    /* Connect Button - minimum 44px touch target */
     .btn-connect {
       display: inline-flex;
       align-items: center;
+      justify-content: center;
       gap: 8px;
-      padding: 8px 14px;
+      min-height: 44px;
+      padding: 0 16px;
       border-radius: 12px;
       font-size: 13px;
       font-weight: 700;
       font-family: var(--font-display);
-      border: 1px solid rgba(0, 242, 254, 0.3);
+      border: 1px solid rgba(0, 242, 254, 0.35);
       background: rgba(0, 242, 254, 0.12);
       color: var(--accent-cyan);
-      cursor: pointer;
-      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      transition: transform 0.08s ease, background 0.15s ease;
+      will-change: transform;
     }
 
     .btn-connect:active {
-      transform: scale(0.96);
+      transform: scale(0.95);
+      background: rgba(0, 242, 254, 0.22);
     }
 
     .btn-connect.connected {
-      border-color: rgba(16, 185, 129, 0.4);
-      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.45);
+      background: rgba(16, 185, 129, 0.16);
       color: var(--accent-emerald);
     }
 
@@ -160,46 +176,28 @@
       height: 8px;
       border-radius: 50%;
       background: var(--text-dim);
-      transition: all 0.3s ease;
+      flex-shrink: 0;
+      transition: background 0.2s ease;
     }
 
     .connected .status-dot {
       background: var(--accent-emerald);
-      box-shadow: 0 0 10px var(--accent-emerald);
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { transform: scale(1); opacity: 1; }
-      50% { transform: scale(1.3); opacity: 0.7; }
+      box-shadow: 0 0 8px var(--accent-emerald);
     }
 
     /* Speedometer Hero Display */
     .speedo-hero {
       position: relative;
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
-      border-radius: 28px;
-      padding: 24px 20px 20px;
+      border-radius: 24px;
+      padding: 20px 16px 18px;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
-    }
-
-    .speedo-hero::before {
-      content: "";
-      position: absolute;
-      top: -50%;
-      left: -50%;
-      width: 200%;
-      height: 200%;
-      background: radial-gradient(circle at center, rgba(0, 242, 254, 0.07) 0%, transparent 60%);
-      pointer-events: none;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.35);
     }
 
     .speed-gauge-wrap {
@@ -222,13 +220,14 @@
 
     .gauge-bg {
       fill: none;
-      stroke: rgba(255, 255, 255, 0.07);
+      stroke: rgba(255, 255, 255, 0.08);
       stroke-width: 14;
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 0;
     }
 
+    /* Instant 0.12s gauge transition without queuing lag */
     .gauge-fill {
       fill: none;
       stroke: url(#cyanGrad);
@@ -236,13 +235,15 @@
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 283;
-      transition: stroke-dashoffset 0.25s cubic-bezier(0.1, 0.9, 0.2, 1);
+      transition: stroke-dashoffset 0.12s ease-out;
+      will-change: stroke-dashoffset;
     }
 
     .speed-value-box {
       z-index: 2;
       text-align: center;
       margin-bottom: 2px;
+      pointer-events: none;
     }
 
     .speed-num {
@@ -252,7 +253,7 @@
       line-height: 0.9;
       letter-spacing: -1.5px;
       color: #ffffff;
-      text-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+      text-shadow: 0 0 20px rgba(0, 242, 254, 0.25);
     }
 
     .speed-unit {
@@ -276,68 +277,68 @@
       display: flex;
       align-items: center;
       gap: 6px;
-      padding: 5px 12px;
+      padding: 6px 14px;
       border-radius: 20px;
       font-size: 12px;
       font-weight: 700;
       background: rgba(255, 255, 255, 0.05);
       border: 1px solid var(--border-card);
       color: var(--text-muted);
-      transition: all 0.2s ease;
+      transition: background 0.15s ease, color 0.15s ease;
     }
 
     .badge.active-brake {
       background: rgba(244, 63, 94, 0.2);
       border-color: rgba(244, 63, 94, 0.6);
       color: var(--accent-rose);
-      box-shadow: 0 0 12px rgba(244, 63, 94, 0.4);
+      box-shadow: 0 0 12px rgba(244, 63, 94, 0.35);
     }
 
     .badge.active-kick {
-      background: rgba(16, 185, 129, 0.15);
-      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.18);
+      border-color: rgba(16, 185, 129, 0.45);
       color: var(--accent-emerald);
     }
 
     /* Section Title */
     .section-title {
       font-family: var(--font-display);
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 1.5px;
       color: var(--text-dim);
-      margin-left: 6px;
+      margin-left: 4px;
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
 
-    /* Profile Selector Cards */
+    /* Profile Selector Cards - minimum 74px height for easy tapping */
     .profiles-grid {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 12px;
+      gap: 10px;
     }
 
     .profile-card {
       position: relative;
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid var(--border-card);
-      border-radius: 20px;
-      padding: 16px 14px;
+      border: 1.5px solid var(--border-card);
+      border-radius: 18px;
+      padding: 14px 14px;
+      min-height: 74px;
       display: flex;
       flex-direction: column;
-      gap: 6px;
-      cursor: pointer;
-      transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-      overflow: hidden;
+      justify-content: space-between;
+      gap: 4px;
+      transition: transform 0.08s ease, background 0.12s ease, border-color 0.12s ease;
+      will-change: transform;
     }
 
     .profile-card:active {
       transform: scale(0.96);
+      background: var(--bg-card-active);
     }
 
     .profile-card .p-header {
@@ -357,7 +358,7 @@
 
     .profile-card .p-limit {
       font-family: var(--font-display);
-      font-size: 20px;
+      font-size: 19px;
       font-weight: 800;
       color: #fff;
     }
@@ -378,7 +379,7 @@
     .profile-card.active {
       border-color: var(--card-accent);
       background: var(--bg-card-active);
-      box-shadow: 0 0 20px var(--card-glow);
+      box-shadow: 0 0 16px var(--card-glow);
     }
 
     .profile-card.active .p-gear {
@@ -411,11 +412,9 @@
 
     .telem-box {
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
       border-radius: 16px;
-      padding: 12px 10px;
+      padding: 12px 8px;
       text-align: center;
       display: flex;
       flex-direction: column;
@@ -446,8 +445,6 @@
     /* Controls & Quick Actions */
     .controls-card {
       background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
       border-radius: 20px;
       padding: 16px;
@@ -473,7 +470,7 @@
       color: var(--text-muted);
     }
 
-    /* Quick slider */
+    /* Range input with isolated touch-action */
     .slider-wrap {
       display: flex;
       align-items: center;
@@ -484,10 +481,11 @@
     .range-input {
       flex: 1;
       accent-color: var(--accent-rose);
-      height: 6px;
-      border-radius: 4px;
-      background: rgba(255, 255, 255, 0.1);
+      height: 10px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.12);
       outline: none;
+      touch-action: none; /* Prevents scroll hijacking when dragging */
     }
 
     .slider-val {
@@ -495,7 +493,7 @@
       font-size: 13px;
       font-weight: 700;
       color: var(--accent-rose);
-      min-width: 48px;
+      min-width: 52px;
       text-align: right;
     }
 
@@ -506,24 +504,25 @@
     }
 
     .btn-secondary {
+      min-height: 44px;
       padding: 10px;
       border-radius: 12px;
       font-size: 12px;
       font-weight: 700;
       font-family: var(--font-display);
       border: 1px solid var(--border-card);
-      background: rgba(255, 255, 255, 0.04);
+      background: rgba(255, 255, 255, 0.05);
       color: var(--text-main);
-      cursor: pointer;
       display: flex;
       align-items: center;
       justify-content: center;
       gap: 6px;
-      transition: all 0.2s ease;
+      transition: transform 0.08s ease, background 0.12s ease;
+      will-change: transform;
     }
 
     .btn-secondary:active {
-      background: rgba(255, 255, 255, 0.1);
+      background: rgba(255, 255, 255, 0.12);
       transform: scale(0.97);
     }
 
@@ -536,11 +535,11 @@
     }
 
     details.console-drawer summary {
-      padding: 12px 16px;
+      min-height: 44px;
+      padding: 10px 16px;
       font-size: 12px;
       font-weight: 700;
       color: var(--text-muted);
-      cursor: pointer;
       list-style: none;
       display: flex;
       justify-content: space-between;
@@ -552,7 +551,7 @@
     }
 
     .console-body {
-      padding: 12px 16px 16px;
+      padding: 10px 14px 14px;
       border-top: 1px solid var(--border-card);
       display: flex;
       flex-direction: column;
@@ -579,10 +578,11 @@
 
     .console-input {
       flex: 1;
+      height: 38px;
       background: rgba(0, 0, 0, 0.3);
       border: 1px solid var(--border-card);
       border-radius: 8px;
-      padding: 6px 10px;
+      padding: 0 10px;
       font-family: var(--font-mono);
       font-size: 12px;
       color: #fff;
@@ -596,10 +596,10 @@
     /* Non-Bluetooth Warning Banner */
     #ble-warning {
       display: none;
-      background: linear-gradient(135deg, rgba(244, 63, 94, 0.2), rgba(157, 78, 221, 0.2));
-      border: 1px solid rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.15);
+      border: 1px solid rgba(244, 63, 94, 0.45);
       border-radius: 16px;
-      padding: 14px 16px;
+      padding: 12px 14px;
       font-size: 12px;
       line-height: 1.5;
     }
@@ -623,18 +623,18 @@
       bottom: 24px;
       left: 50%;
       transform: translateX(-50%) translateY(100px);
-      background: rgba(15, 23, 42, 0.95);
+      background: #0f172a;
       border: 1px solid var(--accent-cyan);
       color: #fff;
       padding: 10px 20px;
       border-radius: 30px;
       font-size: 13px;
       font-weight: 600;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(10px);
-      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 8px 20px rgba(0, 0, 0, 0.6);
+      transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
       z-index: 100;
       pointer-events: none;
+      will-change: transform;
     }
 
     .toast.show {
@@ -683,7 +683,6 @@
               <stop offset="100%" stop-color="#9d4edd" />
             </linearGradient>
           </defs>
-          <!-- 180-deg arc (semi-circle): r=45, circumference ~ 282.7 -->
           <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
           <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
         </svg>
@@ -804,7 +803,7 @@
     </div>
 
     <!-- Console Drawer -->
-    <details class="console-drawer">
+    <details class="console-drawer" id="console-drawer">
       <summary>
         <span>🖥️ Live Console & Custom Command</span>
         <span style="font-size: 10px;">▼</span>
@@ -813,7 +812,7 @@
         <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
         <div class="console-input-row">
           <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, BC 30, R, ?" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
-          <button class="btn-secondary" style="padding: 6px 14px;" onclick="sendCustomCmd()">Send</button>
+          <button class="btn-secondary" style="min-height:38px; padding: 0 16px;" onclick="sendCustomCmd()">Send</button>
         </div>
       </div>
     </details>
@@ -836,6 +835,44 @@
     let isConnected = false;
     let currentActiveGear = 1;
     let isZeroStart = true;
+    let isWriting = false;
+    let wakeLock = null;
+
+    // Cached DOM Lookups to prevent DOM querying in 5Hz loop
+    const dom = {
+      btnBle: document.getElementById('btn-ble'),
+      bleBtnText: document.getElementById('ble-btn-text'),
+      subStatus: document.getElementById('sub-status'),
+      dispSpeed: document.getElementById('disp-speed'),
+      gaugeBar: document.getElementById('gauge-bar'),
+      dispVoltage: document.getElementById('disp-voltage'),
+      dispCurrent: document.getElementById('disp-current'),
+      dispThrottle: document.getElementById('disp-throttle'),
+      badgeBrake: document.getElementById('badge-brake'),
+      brakeText: document.getElementById('brake-text'),
+      badgeKick: document.getElementById('badge-kick'),
+      kickText: document.getElementById('kick-text'),
+      activeProfileLabel: document.getElementById('active-profile-label'),
+      brakeSlider: document.getElementById('brake-slider'),
+      brakeAmpVal: document.getElementById('brake-amp-val'),
+      btnKickText: document.getElementById('btn-kick-text'),
+      consoleLog: document.getElementById('console-output'),
+      consoleDrawer: document.getElementById('console-drawer'),
+      customCmd: document.getElementById('custom-cmd'),
+      toast: document.getElementById('toast'),
+      profileCards: document.querySelectorAll('.profile-card')
+    };
+
+    // Buffer console in memory to avoid DOM layout thrashing when drawer is closed
+    const consoleBuffer = [];
+    const MAX_BUFFER_LINES = 40;
+
+    dom.consoleDrawer.addEventListener('toggle', () => {
+      if (dom.consoleDrawer.open) {
+        dom.consoleLog.textContent = consoleBuffer.join('\n');
+        dom.consoleLog.scrollTop = dom.consoleLog.scrollHeight;
+      }
+    });
 
     // Check Web Bluetooth support
     window.addEventListener('DOMContentLoaded', () => {
@@ -843,6 +880,24 @@
         document.getElementById('ble-warning').style.display = 'block';
       }
     });
+
+    // Screen Wake Lock API to prevent phone screen from dimming while riding
+    async function requestWakeLock() {
+      try {
+        if ('wakeLock' in navigator) {
+          wakeLock = await navigator.wakeLock.request('screen');
+        }
+      } catch (e) {
+        console.log("WakeLock:", e.message);
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLock) {
+        wakeLock.release().catch(() => {});
+        wakeLock = null;
+      }
+    }
 
     // =========================================================================
     // Web Bluetooth Connection
@@ -856,13 +911,9 @@
     }
 
     async function connectBle() {
-      const btn = document.getElementById('btn-ble');
-      const btnText = document.getElementById('ble-btn-text');
-      const subStatus = document.getElementById('sub-status');
-      
       try {
-        btnText.textContent = "Scanning...";
-        subStatus.textContent = "Selecting Scooter-ESP32...";
+        dom.bleBtnText.textContent = "Scanning...";
+        dom.subStatus.textContent = "Selecting Scooter-ESP32...";
 
         bleDevice = await navigator.bluetooth.requestDevice({
           filters: [{ name: 'Scooter-ESP32' }],
@@ -871,7 +922,7 @@
 
         bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
-        btnText.textContent = "Connecting...";
+        dom.bleBtnText.textContent = "Connecting...";
         bleServer = await bleDevice.gatt.connect();
 
         const service = await bleServer.getPrimaryService(BLE_SVC_UUID);
@@ -882,20 +933,21 @@
         bleCharacteristic.addEventListener('characteristicvaluechanged', handleNotifications);
 
         isConnected = true;
-        btn.classList.add('connected');
-        btnText.textContent = "Connected";
-        subStatus.textContent = "Scooter-ESP32 Online";
+        dom.btnBle.classList.add('connected');
+        dom.bleBtnText.textContent = "Connected";
+        dom.subStatus.textContent = "Scooter-ESP32 Online";
         showToast("Connected to Scooter-ESP32!");
-        logConsole("[BLE] Connected & Subscribed to telemetry stream.");
+        logConsole("[BLE] Connected & Subscribed.");
+        requestWakeLock();
 
         // Query initial status
-        setTimeout(() => sendCmd("S"), 300);
+        setTimeout(() => sendCmd("S"), 200);
 
       } catch (error) {
         console.error("BLE Connect Error:", error);
-        btn.classList.remove('connected');
-        btnText.textContent = "Connect";
-        subStatus.textContent = "Connection Failed";
+        dom.btnBle.classList.remove('connected');
+        dom.bleBtnText.textContent = "Connect";
+        dom.subStatus.textContent = "Connection Failed";
         if (error.name !== 'NotFoundError') {
           showToast("Connection Error: " + error.message);
         }
@@ -911,16 +963,16 @@
 
     function onDisconnected() {
       isConnected = false;
-      const btn = document.getElementById('btn-ble');
-      btn.classList.remove('connected');
-      document.getElementById('ble-btn-text').textContent = "Connect";
-      document.getElementById('sub-status').textContent = "Disconnected";
+      releaseWakeLock();
+      dom.btnBle.classList.remove('connected');
+      dom.bleBtnText.textContent = "Connect";
+      dom.subStatus.textContent = "Disconnected";
       showToast("Disconnected from Scooter");
       logConsole("[BLE] Disconnected.");
     }
 
     // =========================================================================
-    // BLE Notification Stream Parser
+    // BLE Notification Stream Parser (Dirty Checking to eliminate DOM churn)
     // =========================================================================
     const textDecoder = new TextDecoder('utf-8');
 
@@ -930,45 +982,57 @@
       parseTelemetry(val);
     }
 
+    // Cache last values so we ONLY touch DOM when values actually change
+    let lastSpd = null;
+    let lastV = null;
+    let lastAmp = null;
+    let lastRaw = null;
+    let lastBrk = null;
+    let lastGear = null;
+    let lastBc = null;
+    let lastKick = null;
+
     function parseTelemetry(str) {
-      // Stream format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
-      const spdMatch = str.match(/SPD=([\d.]+)/);
+      // Format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
+      const spdMatch  = str.match(/SPD=([\d.]+)/);
       const gearMatch = str.match(/G=(\d+)/);
-      const sMatch = str.match(/S=(\d+)/);
-      const vMatch = str.match(/V=([\d.]+)/);
-      const rawMatch = str.match(/RAW=(\d+)/);
-      const brkMatch = str.match(/BRK=(\d+)/);
-      const ampMatch = str.match(/AMP=([\d.]+)/);
-      const bcMatch = str.match(/BC=([\d.]+)A/);
+      const sMatch    = str.match(/S=(\d+)/);
+      const vMatch    = str.match(/V=([\d.]+)/);
+      const rawMatch  = str.match(/RAW=(\d+)/);
+      const brkMatch  = str.match(/BRK=(\d+)/);
+      const ampMatch  = str.match(/AMP=([\d.]+)/);
+      const bcMatch   = str.match(/BC=([\d.]+)A/);
       const kickMatch = str.match(/KICK=(\w+)/);
 
-      if (spdMatch) {
-        const speed = parseFloat(spdMatch[1]);
-        updateSpeedGauge(speed);
+      if (spdMatch && spdMatch[1] !== lastSpd) {
+        lastSpd = spdMatch[1];
+        updateSpeedGauge(parseFloat(lastSpd));
       }
 
-      if (vMatch) {
-        document.getElementById('disp-voltage').textContent = parseFloat(vMatch[1]).toFixed(1);
+      if (vMatch && vMatch[1] !== lastV) {
+        lastV = vMatch[1];
+        dom.dispVoltage.textContent = parseFloat(lastV).toFixed(1);
       }
 
-      if (ampMatch) {
-        document.getElementById('disp-current').textContent = parseFloat(ampMatch[1]).toFixed(1);
+      if (ampMatch && ampMatch[1] !== lastAmp) {
+        lastAmp = ampMatch[1];
+        dom.dispCurrent.textContent = parseFloat(lastAmp).toFixed(1);
       }
 
-      if (rawMatch) {
-        document.getElementById('disp-throttle').textContent = rawMatch[1];
+      if (rawMatch && rawMatch[1] !== lastRaw) {
+        lastRaw = rawMatch[1];
+        dom.dispThrottle.textContent = lastRaw;
       }
 
-      if (brkMatch) {
-        const isBraking = brkMatch[1] === "1";
-        const badge = document.getElementById('badge-brake');
-        const text = document.getElementById('brake-text');
+      if (brkMatch && brkMatch[1] !== lastBrk) {
+        lastBrk = brkMatch[1];
+        const isBraking = lastBrk === "1";
         if (isBraking) {
-          badge.classList.add('active-brake');
-          text.textContent = "BRAKING";
+          dom.badgeBrake.classList.add('active-brake');
+          dom.brakeText.textContent = "BRAKING";
         } else {
-          badge.classList.remove('active-brake');
-          text.textContent = "BRAKE OFF";
+          dom.badgeBrake.classList.remove('active-brake');
+          dom.brakeText.textContent = "BRAKE OFF";
         }
       }
 
@@ -976,25 +1040,32 @@
         let g = parseInt(gearMatch[1], 10);
         let s = sMatch ? parseInt(sMatch[1], 10) : 0;
         if (g === 3 && s === 1) g = 4; // S-Mode is Profile 4
-        setActiveProfileCard(g);
+        if (g !== lastGear) {
+          lastGear = g;
+          setActiveProfileCard(g);
+        }
       }
 
-      if (bcMatch) {
-        const bc = parseFloat(bcMatch[1]);
-        document.getElementById('brake-slider').value = bc;
-        document.getElementById('brake-amp-val').textContent = bc.toFixed(1) + " A";
+      if (bcMatch && bcMatch[1] !== lastBc) {
+        lastBc = bcMatch[1];
+        const bc = parseFloat(lastBc);
+        dom.brakeSlider.value = bc;
+        dom.brakeAmpVal.textContent = bc.toFixed(1) + " A";
       }
 
-      if (kickMatch) {
-        const isHeld = kickMatch[1] === "HELD";
-        const badge = document.getElementById('badge-kick');
-        const text = document.getElementById('kick-text');
+      if (kickMatch && kickMatch[1] !== lastKick) {
+        lastKick = kickMatch[1];
+        const isHeld = lastKick === "HELD";
         if (isHeld) {
-          badge.classList.remove('active-kick');
-          text.textContent = "PUSH TO START";
+          dom.badgeKick.classList.remove('active-kick');
+          dom.kickText.textContent = "PUSH TO START";
+          isZeroStart = false;
+          dom.btnKickText.textContent = "Push-to-Start: ON";
         } else {
-          badge.classList.add('active-kick');
-          text.textContent = "ZERO START";
+          dom.badgeKick.classList.add('active-kick');
+          dom.kickText.textContent = "ZERO START";
+          isZeroStart = true;
+          dom.btnKickText.textContent = "Zero Start: ON";
         }
       }
     }
@@ -1003,31 +1074,29 @@
     // UI Updates
     // =========================================================================
     function updateSpeedGauge(speed) {
-      document.getElementById('disp-speed').textContent = speed.toFixed(1);
-      
-      // Arc math: Max speed 45 km/h -> maps to dashoffset 283 (0 km/h) down to 141 (half)
+      dom.dispSpeed.textContent = speed.toFixed(1);
       const maxSpeed = 45.0;
       const ratio = Math.min(Math.max(speed / maxSpeed, 0), 1);
       // dashoffset ranges from 283 (0%) to 141.5 (100% of 180-deg arc)
       const offset = 283 - (ratio * 141.5);
-      document.getElementById('gauge-bar').style.strokeDashoffset = offset;
+      dom.gaugeBar.style.strokeDashoffset = offset;
     }
 
     function setActiveProfileCard(gear) {
       currentActiveGear = gear;
-      document.querySelectorAll('.profile-card').forEach(card => {
+      dom.profileCards.forEach(card => {
         card.classList.toggle('active', parseInt(card.dataset.gear, 10) === gear);
       });
       const names = { 1: "P1: Eco (10 km/h)", 2: "P2: City (15 km/h)", 3: "P3: Drive (25 km/h)", 4: "P4: Sport (40+ km/h)" };
-      document.getElementById('active-profile-label').textContent = names[gear] || `Gear ${gear}`;
+      dom.activeProfileLabel.textContent = names[gear] || `Gear ${gear}`;
     }
 
     function updateBrakeSlider(val) {
-      document.getElementById('brake-amp-val').textContent = parseFloat(val).toFixed(1) + " A";
+      dom.brakeAmpVal.textContent = parseFloat(val).toFixed(1) + " A";
     }
 
     // =========================================================================
-    // Outgoing BLE Commands
+    // Outgoing BLE Commands (Non-blocking & Haptic feedback)
     // =========================================================================
     const textEncoder = new TextEncoder();
 
@@ -1036,19 +1105,25 @@
         showToast("Not connected to scooter");
         return;
       }
+      if (isWriting) return; // Prevent concurrent write overlap
+      isWriting = true;
+
       try {
         const data = textEncoder.encode(cmdStr);
         await bleCharacteristic.writeValueWithResponse(data);
         showToast(`Sent: ${cmdStr}`);
         logConsole(`[TX] ${cmdStr}`);
-        if (navigator.vibrate) navigator.vibrate(25);
+        if (navigator.vibrate) navigator.vibrate(20);
       } catch (e) {
         console.error("Write error:", e);
         showToast("Send failed: " + e.message);
+      } finally {
+        isWriting = false;
       }
     }
 
     function selectProfile(gear) {
+      if (navigator.vibrate) navigator.vibrate(15);
       setActiveProfileCard(gear);
       sendCmd(`P ${gear}`);
     }
@@ -1058,37 +1133,43 @@
     }
 
     function toggleKickStart() {
+      if (navigator.vibrate) navigator.vibrate(15);
       isZeroStart = !isZeroStart;
-      const btnText = document.getElementById('btn-kick-text');
       if (isZeroStart) {
         sendCmd('K 0');
-        btnText.textContent = "Zero Start: ON";
+        dom.btnKickText.textContent = "Zero Start: ON";
       } else {
         sendCmd('K 400');
-        btnText.textContent = "Push-to-Start: ON";
+        dom.btnKickText.textContent = "Push-to-Start: ON";
       }
     }
 
     function sendCustomCmd() {
-      const input = document.getElementById('custom-cmd');
-      const val = input.value.trim();
+      const val = dom.customCmd.value.trim();
       if (val) {
         sendCmd(val);
-        input.value = '';
+        dom.customCmd.value = '';
       }
     }
 
+    // High performance log: Buffer lines and only touch DOM if user has drawer open
     function logConsole(msg) {
-      const log = document.getElementById('console-output');
-      log.textContent = (log.textContent.length > 2000 ? log.textContent.slice(-1500) : log.textContent) + "\n" + msg;
-      log.scrollTop = log.scrollHeight;
+      consoleBuffer.push(msg);
+      if (consoleBuffer.length > MAX_BUFFER_LINES) {
+        consoleBuffer.shift();
+      }
+      if (dom.consoleDrawer.open) {
+        dom.consoleLog.textContent = consoleBuffer.join('\n');
+        dom.consoleLog.scrollTop = dom.consoleLog.scrollHeight;
+      }
     }
 
+    let toastTimer = null;
     function showToast(msg) {
-      const t = document.getElementById('toast');
-      t.textContent = msg;
-      t.classList.add('show');
-      setTimeout(() => t.classList.remove('show'), 2200);
+      dom.toast.textContent = msg;
+      dom.toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => dom.toast.classList.remove('show'), 2000);
     }
   </script>
 </body>
