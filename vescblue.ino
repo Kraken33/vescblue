@@ -469,19 +469,19 @@ void setGear(int newGear) {
 }
 
 void handleDisplayRxPacket(const uint8_t *packet) {
-  displayPacketsCount++;
   int rawGear = packet[4];
   bool light = (packet[9] & 0x08) != 0;
 
-  // Handle Gear change with Display Priority
-  if (rawGear != lastRawGear) {
-    int mappedGear = 1;
-    if (rawGear == 5 || rawGear == 1) mappedGear = 1;
-    else if (rawGear == 10 || rawGear == 2) mappedGear = 2;
-    else if (rawGear == 15 || rawGear == 3) mappedGear = 3;
-    else if (rawGear == 20 || rawGear == 4) mappedGear = 4;
-    else mappedGear = rawGear;
+  // Map rawGear (5=1, 10=2, 15=3, 20=4, or direct 1..4)
+  int mappedGear = 1;
+  if (rawGear == 5 || rawGear == 1) mappedGear = 1;
+  else if (rawGear == 10 || rawGear == 2) mappedGear = 2;
+  else if (rawGear == 15 || rawGear == 3) mappedGear = 3;
+  else if (rawGear == 20 || rawGear == 4) mappedGear = 4;
+  else mappedGear = constrain(rawGear, 1, 4);
 
+  // Handle Gear change with Display Priority: trigger if raw gear changed OR if scooter gear is out of sync
+  if (rawGear != lastRawGear || mappedGear != currentGear) {
     setGear(mappedGear);
     lastRawGear = rawGear;
   }
@@ -571,11 +571,11 @@ void processDisplayUart(float speedMps) {
     if (rawDbgIdx < 16) {
       rawDbgBuf[rawDbgIdx++] = b;
     }
-    if (rawDbgIdx >= 15 && (now - lastDbgPrint > 3000)) {
+    if ((rawDbgIdx >= 15 || (rawDbgIdx > 0 && (now - lastDbgPrint > 2000))) && (now - lastDbgPrint > 1500)) {
       lastDbgPrint = now;
       char hexStr[80] = {0};
       int pos = 0;
-      for (int i = 0; i < 15; i++) {
+      for (int i = 0; i < rawDbgIdx; i++) {
         pos += snprintf(hexStr + pos, sizeof(hexStr) - pos, "%02X ", rawDbgBuf[i]);
       }
       if (bleClientConnected) {
@@ -628,9 +628,9 @@ void processDisplayUart(float speedMps) {
     }
   }
 
-  // Send packet to display every 250ms (leaves ample RX bandwidth at 1200 baud)
+  // Send packet to display every 140ms (matches display.lisp 150ms to prevent E-10 timeout)
   unsigned long now = millis();
-  if (now - lastDisplayTxTime >= 250) {
+  if (now - lastDisplayTxTime >= 140) {
     lastDisplayTxTime = now;
     sendDisplayTxPacket(speedMps);
   }
@@ -962,14 +962,17 @@ void bleHandleCommand(const String &cmd) {
       prefs.putInt("disp_rx", displayRxPin);
       prefs.putInt("disp_tx", displayTxPin);
       DisplaySerial.end();
+      DisplaySerial.setRxBufferSize(512);
       DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
+      pinMode(displayRxPin, INPUT_PULLUP);
+      gpio_pullup_en((gpio_num_t)displayRxPin);
       displayRxIndex = 0;
       displayPacketsCount = 0;
       displayRxBytes = 0;
       displayCrcFailures = 0;
       blePushLine("DISPLAY UART pins set: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
     } else {
-      blePushLine("ERR format: DP <rx_pin> <tx_pin> (e.g. DP 22 23 or DP 3 1)");
+      blePushLine("ERR format: DP <rx_pin> <tx_pin> (e.g. DP 22 23)");
     }
   } else if (cmd == "SWAP") {
     int tmp = displayRxPin;
@@ -978,7 +981,10 @@ void bleHandleCommand(const String &cmd) {
     prefs.putInt("disp_rx", displayRxPin);
     prefs.putInt("disp_tx", displayTxPin);
     DisplaySerial.end();
+    DisplaySerial.setRxBufferSize(512);
     DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
+    pinMode(displayRxPin, INPUT_PULLUP);
+    gpio_pullup_en((gpio_num_t)displayRxPin);
     displayRxIndex = 0;
     blePushLine("DISPLAY UART swapped & saved: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
   } else if (cmd == "DISP") {
@@ -1090,12 +1096,17 @@ void setup() {
   analogSetPinAttenuation(THROTTLE_PIN, ADC_11db);
 
   prefs.begin("scooter", false);
-  displayRxPin = prefs.getInt("disp_rx", 22);
-  displayTxPin = prefs.getInt("disp_tx", 23);
-  pinMode(displayRxPin, INPUT_PULLUP);
-  // Display is on UART1 (DisplaySerial) at 1200 Baud
+  // Display UART is permanently wired to GPIO 22 (RX) and GPIO 23 (TX)
+  displayRxPin = 22;
+  displayTxPin = 23;
+  prefs.putInt("disp_rx", 22);
+  prefs.putInt("disp_tx", 23);
+
+  // Display is on UART1 (DisplaySerial) at 1200 Baud (RX=GPIO 22, TX=GPIO 23)
   DisplaySerial.setRxBufferSize(512);
   DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
+  pinMode(displayRxPin, INPUT_PULLUP);
+  gpio_pullup_en((gpio_num_t)displayRxPin);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
   brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW

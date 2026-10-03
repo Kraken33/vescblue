@@ -1694,14 +1694,8 @@
             </div>
 
             <div class="btn-action-row" style="margin-top: 8px;">
-              <button class="btn-secondary" onclick="sendCmd('DP 22 23'); showToast('Set Display: GPIO 22/23');" title="Standard display pins (GPIO 22 RX, GPIO 23 TX)">
-                <span>🔌</span> GPIO 22 / 23 (Default)
-              </button>
-              <button class="btn-secondary" onclick="sendCmd('DP 3 1'); showToast('Set Display: GPIO 3/1 (RX0/TX0)');" title="Hardware UART0 pins (RX0 Pin 3, TX0 Pin 1)">
-                <span>🔌</span> GPIO 3 / 1 (RX0/TX0)
-              </button>
-              <button class="btn-secondary" onclick="sendCmd('SWAP'); showToast('Swapped Display RX/TX');" title="Swap RX and TX pins">
-                <span>🔀</span> Swap RX ⇋ TX
+              <button class="btn-secondary" onclick="sendCmd('DP 22 23'); showToast('Display Pins Reset: GPIO 22 RX, GPIO 23 TX');" title="Ensure display pins are GPIO 22 RX, GPIO 23 TX">
+                <span>🔌</span> Reset Display (GPIO 22/23)
               </button>
               <button class="btn-secondary" onclick="sendCmd('DISP');" title="Query live display packet counts and raw gear">
                 <span>🔍</span> Diagnostics (DISP)
