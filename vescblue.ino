@@ -928,6 +928,24 @@ void bleHandleCommand(const String &cmd) {
     sendBrakeFlagToSlave(debouncedBrakeState);
     lastSentBrakeState = debouncedBrakeState;
     blePushLine(String("BRAKE pushed ") + (debouncedBrakeState ? "1" : "0"));
+  } else if (cmd.startsWith("DP ")) {
+    int rx = 22;
+    int tx = 23;
+    if (sscanf(cmd.c_str() + 3, "%d %d", &rx, &tx) == 2) {
+      displayRxPin = rx;
+      displayTxPin = tx;
+      prefs.putInt("disp_rx", displayRxPin);
+      prefs.putInt("disp_tx", displayTxPin);
+      DisplaySerial.end();
+      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
+      displayRxIndex = 0;
+      displayPacketsCount = 0;
+      displayRxBytes = 0;
+      displayCrcFailures = 0;
+      blePushLine("DISPLAY UART pins set: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
+    } else {
+      blePushLine("ERR format: DP <rx_pin> <tx_pin> (e.g. DP 22 23 or DP 3 1)");
+    }
   } else if (cmd == "SWAP") {
     int tmp = displayRxPin;
     displayRxPin = displayTxPin;
@@ -950,7 +968,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | DISP disp_info | SWAP disp_pins | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
+    blePushLine("S status | DISP info | DP [rx] [tx] | SWAP pins | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }

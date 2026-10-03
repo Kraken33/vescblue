@@ -1680,6 +1680,34 @@
               </button>
             </div>
           </div>
+
+          <!-- Display UART Hardware Configuration -->
+          <div class="controls-card" style="margin-top: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center;">
+              <div>
+                <div class="control-row">
+                  <span class="control-label">Physical Display UART</span>
+                  <span id="disp-status-badge" class="badge" style="font-size: 10px; padding: 2px 8px; background: rgba(0, 240, 255, 0.1); color: var(--accent-cyan);">Listening</span>
+                </div>
+                <div class="control-sub" id="disp-pin-info">Pins: RX=GPIO 22, TX=GPIO 23 (1200 Baud)</div>
+              </div>
+            </div>
+
+            <div class="btn-action-row" style="margin-top: 8px;">
+              <button class="btn-secondary" onclick="sendCmd('DP 22 23'); showToast('Set Display: GPIO 22/23');" title="Standard display pins (GPIO 22 RX, GPIO 23 TX)">
+                <span>🔌</span> GPIO 22 / 23 (Default)
+              </button>
+              <button class="btn-secondary" onclick="sendCmd('DP 3 1'); showToast('Set Display: GPIO 3/1 (RX0/TX0)');" title="Hardware UART0 pins (RX0 Pin 3, TX0 Pin 1)">
+                <span>🔌</span> GPIO 3 / 1 (RX0/TX0)
+              </button>
+              <button class="btn-secondary" onclick="sendCmd('SWAP'); showToast('Swapped Display RX/TX');" title="Swap RX and TX pins">
+                <span>🔀</span> Swap RX ⇋ TX
+              </button>
+              <button class="btn-secondary" onclick="sendCmd('DISP');" title="Query live display packet counts and raw gear">
+                <span>🔍</span> Diagnostics (DISP)
+              </button>
+            </div>
+          </div>
         </div>
 
         <!-- TAB 2: GPS TRIP COMPUTER -->
@@ -2126,13 +2154,52 @@
         }
       }
 
-      const gearShiftMatch = str.match(/GEAR shifted -> Gear (\d+)/i) || str.match(/PROFILE (\d+)/i);
+      const gearShiftMatch = str.match(/GEAR shifted -> Gear (\d+)/i) || str.match(/PROFILE (\d+)/i) || str.match(/DISPLAY shifted -> Gear (\d+)/i);
       if (gearShiftMatch) {
         let g = parseInt(gearShiftMatch[1], 10);
         let s = sMatch ? parseInt(sMatch[1], 10) : 0;
         if (g === 3 && s === 1) g = 4;
         if (g >= 1 && g <= 4) {
           setActiveProfileCard(g);
+        }
+      }
+
+      const dispMatch = str.match(/DISP:\s*RX_PIN=(\d+)\s*TX_PIN=(\d+)\s*PKTS=(\d+)/i);
+      if (dispMatch) {
+        const rx = dispMatch[1];
+        const tx = dispMatch[2];
+        const pkts = parseInt(dispMatch[3], 10);
+        const info = document.getElementById('disp-pin-info');
+        const badge = document.getElementById('disp-status-badge');
+        if (info) info.textContent = `Pins: RX=GPIO ${rx}, TX=GPIO ${tx} (1200 Baud)`;
+        if (badge) {
+          if (pkts > 0) {
+            badge.textContent = `🟢 Active (${pkts} pkts)`;
+            badge.style.color = '#00ff88';
+          } else {
+            badge.textContent = `🔴 No Signal (0 pkts)`;
+            badge.style.color = '#ff4444';
+          }
+        }
+      }
+
+      const dpinMatch = str.match(/DPIN=(\d+)\/(\d+)/);
+      const dpktMatch = str.match(/DPKT=(\d+)/);
+      if (dpinMatch) {
+        const info = document.getElementById('disp-pin-info');
+        if (info) info.textContent = `Pins: RX=GPIO ${dpinMatch[1]}, TX=GPIO ${dpinMatch[2]} (1200 Baud)`;
+      }
+      if (dpktMatch) {
+        const pkts = parseInt(dpktMatch[1], 10);
+        const badge = document.getElementById('disp-status-badge');
+        if (badge) {
+          if (pkts > 0) {
+            badge.textContent = `🟢 Active (${pkts} pkts)`;
+            badge.style.color = '#00ff88';
+          } else {
+            badge.textContent = `🔴 No Signal (0 pkts)`;
+            badge.style.color = '#ff9944';
+          }
         }
       }
 
