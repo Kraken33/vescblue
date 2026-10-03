@@ -37,16 +37,16 @@ async def flash_firmware(bin_path):
     print(f"Firmware file: {bin_path}")
     print(f"Firmware size: {total_len:,} bytes ({total_len / 1024:.1f} KB)")
 
-    print(f"Scanning for {DEVICE_NAME} or BLE Service {BLE_SVC_UUID}...")
+    print(f"Scanning for {DEVICE_NAME}...")
     device = await BleakScanner.find_device_by_name(DEVICE_NAME, timeout=6.0)
     if not device:
-        discovered = await BleakScanner.discover(timeout=6.0)
-        for d in discovered:
-            if d.name and (DEVICE_NAME.lower() in d.name.lower() or "scooter" in d.name.lower() or "vesc" in d.name.lower()):
+        devs = await BleakScanner.discover(timeout=5.0)
+        for d in devs:
+            if (d.name and (DEVICE_NAME.lower() in d.name.lower() or "scooter" in d.name.lower())) or d.address == "C8B428FF-57B8-F106-DD38-D3C71AAC8EAE":
                 device = d
                 break
     if not device:
-        print(f"Could not find BLE device named '{DEVICE_NAME}' or matching scooter service!")
+        print(f"Could not find BLE device named '{DEVICE_NAME}'!")
         return False
 
     print(f"Connecting to {device.name} ({device.address})...")
