@@ -137,6 +137,9 @@ bool lastLightState = false;
 bool profileSSwitch = false;
 uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
 
+bool vescConfigured = false;
+unsigned long lastProfileSyncTime = 0;
+
 DriveProfile activeProfile = PROFILE_1;
 
 // =========================================================================
@@ -375,6 +378,11 @@ void processVescIncoming() {
           uint16_t receivedCrc = ((uint16_t)vescRxBuf[2 + payloadLen] << 8) | vescRxBuf[2 + payloadLen + 1];
 
           if (expectedCrc == receivedCrc && vescRxBuf[2] == 4 && payloadLen >= 27) {
+            if (!vescConfigured) {
+              vescConfigured = true;
+              updateActiveProfile();
+            }
+
             // Unpack ERPM (bytes 23-26 in COMM_GET_VALUES payload)
             // Payload starts at vescRxBuf[2], so ERPM is at index 2 + 23 = 25
             int32_t erpm = ((int32_t)vescRxBuf[25] << 24) |
@@ -411,11 +419,13 @@ void processVescIncoming() {
 void updateActiveProfile() {
   if (currentGear == 1) {
     activeProfile = PROFILE_1;
+    profileSSwitch = false;
   } else if (currentGear == 2) {
     activeProfile = profileSSwitch ? PROFILE_S2 : PROFILE_2;
   } else if (currentGear == 3) {
     activeProfile = profileSSwitch ? PROFILE_S3 : PROFILE_3;
   } else if (currentGear == 4) {
+    profileSSwitch = true;
     activeProfile = PROFILE_S3;
   }
   // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both VESCs
@@ -433,6 +443,8 @@ void setGear(int newGear) {
 
   if (currentGear == 1) {
     profileSSwitch = false;
+  } else if (currentGear == 4) {
+    profileSSwitch = true;
   }
 
   updateActiveProfile();
@@ -441,6 +453,19 @@ void setGear(int newGear) {
   snprintf(gbuf, sizeof(gbuf), "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A)",
            currentGear, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps);
   blePushLine(String(gbuf));
+
+  // Push immediate telemetry update line so connected App updates immediately with 0 latency
+  if (bleClientConnected) {
+    char buf[210];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
+             vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
+             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
+             targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
+             isScooterLocked ? 1 : 0,
+             (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
+             garminLockEnabled ? 1 : 0);
+    blePushLine(String(buf));
+  }
 }
 
 void handleDisplayRxPacket(const uint8_t *packet) {
@@ -448,7 +473,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   int rawGear = packet[4];
   bool light = (packet[9] & 0x08) != 0;
 
-  // Handle Gear change
+  // Handle Gear change with Display Priority
   if (rawGear != lastRawGear) {
     int mappedGear = 1;
     if (rawGear == 5 || rawGear == 1) mappedGear = 1;
@@ -471,6 +496,18 @@ void handleDisplayRxPacket(const uint8_t *packet) {
       lastRawGear = 228; // Force re-evaluating active gear profile
       updateActiveProfile();
       blePushLine("SECRET UNLOCK: S-Mode (Sport 40+ km/h) activated!");
+      // Push immediate update so App shows Sport mode
+      if (bleClientConnected) {
+        char buf[210];
+        snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=1 V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
+                 vehicleSpeedKmH, currentGear,
+                 batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
+                 targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
+                 isScooterLocked ? 1 : 0,
+                 (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
+                 garminLockEnabled ? 1 : 0);
+        blePushLine(String(buf));
+      }
     }
 
     lastLightState = light;
@@ -527,7 +564,7 @@ void processDisplayUart(float speedMps) {
     displayRxBytes++;
     unsigned long now = millis();
 
-    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 80) {
+    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 250) {
       displayRxIndex = 0;
     }
     lastDisplayRxByteTime = now;
@@ -722,28 +759,7 @@ void bleHandleCommand(const String &cmd) {
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
-      if (g == 1) {
-        currentGear = 1;
-        profileSSwitch = false;
-        activeProfile = PROFILE_1;
-      } else if (g == 2) {
-        currentGear = 2;
-        profileSSwitch = false;
-        activeProfile = PROFILE_2;
-      } else if (g == 3) {
-        currentGear = 3;
-        profileSSwitch = false;
-        activeProfile = PROFILE_3;
-      } else if (g == 4) {
-        currentGear = 3;
-        profileSSwitch = true;
-        activeProfile = PROFILE_S3;
-      }
-      sendVescTempProfile(activeProfile.maxErpm, 1.0f);
-      char pbuf[120];
-      snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A)",
-               g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps);
-      blePushLine(String(pbuf));
+      setGear(g);
     } else {
       blePushLine("ERR profile 1..4 (1=10km/h, 2=15km/h, 3=25km/h, 4=40km/h)");
     }
@@ -1177,7 +1193,22 @@ void loop() {
       currentMotorState = STATE_DRIVE;
       idleFramesRemaining = 1;
       targetBrakeAmps = 0.0f;
-      targetAmps = rawRatio * activeProfile.maxCurrentAmps;
+
+      float reqAmps = rawRatio * activeProfile.maxCurrentAmps;
+
+      // Speed Limiter Governor:
+      // Smoothly tapers motor current as vehicle speed approaches the active profile limit
+      float speedLimit = activeProfile.speedLimitKmH;
+      if (speedLimit < 40.0f) {
+        if (vehicleSpeedKmH >= speedLimit) {
+          reqAmps = 0.0f; // Cut driving current at or above speed limit
+        } else if (vehicleSpeedKmH > (speedLimit - 2.0f)) {
+          float scale = (speedLimit - vehicleSpeedKmH) / 2.0f;
+          reqAmps = reqAmps * constrain(scale, 0.0f, 1.0f);
+        }
+      }
+
+      targetAmps = reqAmps;
       sendDualCurrent(targetAmps, targetAmps);
     } else {
       // Coasting / Idle (0 throttle, 0 brake)
@@ -1194,6 +1225,12 @@ void loop() {
       // When STATE_IDLE: DO NOT continuously spam 0A current packets.
       // This allows VESC to enter true MC_STATE_OFF (freewheel with zero drag)!
     }
+  }
+
+  // Periodic profile sync (every 3000ms) to ensure VESC RAM settings remain active
+  if (vescConfigured && now - lastProfileSyncTime > 3000) {
+    lastProfileSyncTime = now;
+    sendVescTempProfile(activeProfile.maxErpm, 1.0f);
   }
 
   // 8. BLE notify live line at 5 Hz

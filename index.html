@@ -2121,7 +2121,19 @@
         let g = parseInt(gearMatch[1], 10);
         let s = sMatch ? parseInt(sMatch[1], 10) : 0;
         if (g === 3 && s === 1) g = 4; // S-Mode is Profile 4
-        setActiveProfileCard(g);
+        if (g >= 1 && g <= 4) {
+          setActiveProfileCard(g);
+        }
+      }
+
+      const gearShiftMatch = str.match(/GEAR shifted -> Gear (\d+)/i) || str.match(/PROFILE (\d+)/i);
+      if (gearShiftMatch) {
+        let g = parseInt(gearShiftMatch[1], 10);
+        let s = sMatch ? parseInt(sMatch[1], 10) : 0;
+        if (g === 3 && s === 1) g = 4;
+        if (g >= 1 && g <= 4) {
+          setActiveProfileCard(g);
+        }
       }
 
       if (bcMatch) {
