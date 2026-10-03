@@ -564,6 +564,26 @@ void processDisplayUart(float speedMps) {
     displayRxBytes++;
     unsigned long now = millis();
 
+    // Raw hex sniffer (logs packet stream for debugging)
+    static uint8_t rawDbgBuf[16];
+    static int rawDbgIdx = 0;
+    static unsigned long lastDbgPrint = 0;
+    if (rawDbgIdx < 16) {
+      rawDbgBuf[rawDbgIdx++] = b;
+    }
+    if (rawDbgIdx >= 15 && (now - lastDbgPrint > 3000)) {
+      lastDbgPrint = now;
+      char hexStr[80] = {0};
+      int pos = 0;
+      for (int i = 0; i < 15; i++) {
+        pos += snprintf(hexStr + pos, sizeof(hexStr) - pos, "%02X ", rawDbgBuf[i]);
+      }
+      if (bleClientConnected) {
+        blePushLine("DISP_RAW: " + String(hexStr));
+      }
+      rawDbgIdx = 0;
+    }
+
     if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 300) {
       displayRxIndex = 0;
     }
@@ -576,8 +596,13 @@ void processDisplayUart(float speedMps) {
     } else {
       displayRxBuffer[displayRxIndex++] = b;
       if (displayRxIndex >= 15) {
-        uint8_t expectedCrc = xorCrc(displayRxBuffer, 14);
-        if (displayRxBuffer[14] == expectedCrc) {
+        uint8_t crc1 = xorCrc(displayRxBuffer, 14);
+        uint8_t crc2 = xorCrc(&displayRxBuffer[1], 13);
+        bool valid = (displayRxBuffer[14] == crc1) || 
+                     (displayRxBuffer[14] == crc2) || 
+                     (displayRxBuffer[0] == 0x01 && displayRxBuffer[1] == 0x03);
+
+        if (valid) {
           displayPacketsCount++;
           handleDisplayRxPacket(displayRxBuffer);
           displayRxIndex = 0;
@@ -1069,6 +1094,7 @@ void setup() {
   displayTxPin = prefs.getInt("disp_tx", 23);
   pinMode(displayRxPin, INPUT_PULLUP);
   // Display is on UART1 (DisplaySerial) at 1200 Baud
+  DisplaySerial.setRxBufferSize(512);
   DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
   brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
