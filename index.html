@@ -394,6 +394,12 @@
       gap: 8px;
       width: 100%;
       margin-top: 14px;
+      transition: all 0.3s ease;
+    }
+
+    .telem-grid.trip-enabled {
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
     }
 
     .telem-box {
@@ -405,7 +411,13 @@
       display: flex;
       flex-direction: column;
       gap: 2px;
-      transition: border-color 0.2s ease;
+      transition: all 0.2s ease;
+      min-width: 0;
+    }
+
+    .telem-grid.trip-enabled .telem-box {
+      padding: 8px 4px;
+      border-radius: 12px;
     }
 
     .telem-label {
@@ -414,6 +426,9 @@
       color: var(--text-dim);
       letter-spacing: 0.8px;
       text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
     }
 
     .telem-val {
@@ -421,12 +436,33 @@
       font-size: 20px;
       font-weight: 800;
       color: #fff;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .telem-grid.trip-enabled .telem-val {
+      font-size: 17px;
+    }
+
+    .telem-grid.trip-enabled .telem-label {
+      font-size: 8.5px;
     }
 
     .telem-unit {
       font-size: 10px;
       font-weight: 500;
       color: var(--text-muted);
+    }
+
+    .telem-grid.trip-enabled .telem-unit {
+      font-size: 9px;
+    }
+
+    .telem-box.telem-box-trip {
+      border-color: rgba(0, 242, 254, 0.35);
+      background: rgba(0, 242, 254, 0.07);
+      box-shadow: 0 0 10px rgba(0, 242, 254, 0.1);
     }
 
     /* Section Title */
@@ -1502,7 +1538,7 @@
           </div>
         </div>
 
-        <!-- Compact Live Telemetry Triplet (As requested) -->
+        <!-- Compact Live Telemetry Triplet + Dynamic GPS Trip Distance when enabled -->
         <div class="telem-grid">
           <div class="telem-box">
             <span class="telem-label">Battery</span>
@@ -1518,6 +1554,11 @@
             <span class="telem-label">Throttle</span>
             <span id="disp-throttle" class="telem-val">--</span>
             <span class="telem-unit">ADC Raw</span>
+          </div>
+          <div id="telem-box-trip" class="telem-box telem-box-trip" style="display: none;">
+            <span class="telem-label">Trip Dist</span>
+            <span id="disp-main-trip-dist" class="telem-val" style="color: var(--accent-cyan);">0.00</span>
+            <span class="telem-unit">KM</span>
           </div>
         </div>
       </section>
@@ -1830,19 +1871,20 @@
     let garminTargetMac = "";
 
     // =========================================================================
-    // GPS Trip Tracker & Odometer State
+    // GPS Trip Tracker & Odometer State (Persistent across sessions)
     // =========================================================================
     let tripWatchId = null;
     let isTripRunning = false;
     let isTripPaused = false;
     let tripStartTime = 0;
-    let tripElapsedMs = 0;
+    let tripElapsedMs = parseInt(localStorage.getItem('vesc_trip_elapsed_ms') || '0', 10);
     let tripTimerInterval = null;
 
     let lastGpsCoords = null; // { lat, lon, timestamp, accuracy }
-    let tripDistanceMeters = 0;
-    let tripMaxSpeedKmh = 0;
+    let tripDistanceMeters = parseFloat(localStorage.getItem('vesc_trip_distance_meters') || '0.0');
+    let tripMaxSpeedKmh = parseFloat(localStorage.getItem('vesc_trip_max_speed') || '0.0');
     let totalOdometerKm = parseFloat(localStorage.getItem('vesc_total_odometer') || '0.0');
+    let wasTripActiveSaved = localStorage.getItem('vesc_trip_active') === 'true';
 
     let wakeLockSentinel = null;
 
@@ -1892,7 +1934,7 @@
     }
 
     // =========================================================================
-    // Web Bluetooth Connection
+    // Web Bluetooth Connection & Auto-Resume Trip
     // =========================================================================
     async function toggleBleConnection() {
       if (isConnected) {
@@ -1938,6 +1980,13 @@
         // Query initial status
         setTimeout(() => sendCmd("S"), 300);
 
+        // Auto-start or auto-resume trip if it was active or enabled across sessions!
+        if (localStorage.getItem('vesc_trip_active') === 'true' || tripDistanceMeters > 0) {
+          if (!isTripRunning) {
+            startTripRecording(false);
+          }
+        }
+
       } catch (error) {
         console.error("BLE Connect Error:", error);
         btn.classList.remove('connected');
@@ -1964,6 +2013,11 @@
       document.getElementById('sub-status').textContent = "Disconnected";
       showToast("Disconnected from Scooter");
       logConsole("[BLE] Disconnected.");
+
+      // Preserve trip state in localStorage so reconnecting automatically resumes!
+      if (isTripRunning) {
+        saveTripData();
+      }
     }
 
     // =========================================================================
@@ -1999,7 +2053,9 @@
         updateSpeedGauge(speed);
         if (isTripRunning && !isTripPaused && speed > tripMaxSpeedKmh) {
           tripMaxSpeedKmh = speed;
-          document.getElementById('trip-max-speed').textContent = tripMaxSpeedKmh.toFixed(1);
+          const maxSpeedEl = document.getElementById('trip-max-speed');
+          if (maxSpeedEl) maxSpeedEl.textContent = tripMaxSpeedKmh.toFixed(1);
+          localStorage.setItem('vesc_trip_max_speed', tripMaxSpeedKmh.toString());
         }
       }
 
@@ -2382,31 +2438,50 @@
     }
 
     // =========================================================================
-    // GPS Trip Computer & Distance Tracker
+    // GPS Trip Computer & Distance Tracker (Persistent & Auto-Resuming)
     // =========================================================================
     function initTripComputer() {
       if (isNaN(totalOdometerKm)) totalOdometerKm = 0.0;
-      document.getElementById('disp-odo').textContent = totalOdometerKm.toFixed(2) + " km";
+      if (isNaN(tripDistanceMeters)) tripDistanceMeters = 0.0;
+      if (isNaN(tripElapsedMs)) tripElapsedMs = 0;
+      if (isNaN(tripMaxSpeedKmh)) tripMaxSpeedKmh = 0.0;
+
+      const odoEl = document.getElementById('disp-odo');
+      if (odoEl) odoEl.textContent = totalOdometerKm.toFixed(2) + " km";
+      
       updateTripUI();
+
+      // If a trip was active in a previous session, auto-resume tracking!
+      if (wasTripActiveSaved) {
+        startTripRecording(false);
+      }
+    }
+
+    function saveTripData() {
+      localStorage.setItem('vesc_trip_distance_meters', tripDistanceMeters.toString());
+      localStorage.setItem('vesc_trip_elapsed_ms', tripElapsedMs.toString());
+      localStorage.setItem('vesc_trip_max_speed', tripMaxSpeedKmh.toString());
+      localStorage.setItem('vesc_trip_active', isTripRunning ? 'true' : 'false');
+      saveOdometer();
     }
 
     async function toggleTripRecording() {
       if (isTripRunning) {
         stopTripRecording();
       } else {
-        await startTripRecording();
+        await startTripRecording(true);
       }
     }
 
-    async function startTripRecording() {
+    async function startTripRecording(isFresh = true) {
       if (!navigator.geolocation) {
         showToast("Geolocation is not supported by your browser");
         setGpsStatus('error', 'No GPS Support');
         return;
       }
 
-      // If starting fresh
-      if (!isTripPaused) {
+      // If starting fresh (not resuming existing trip)
+      if (isFresh && !isTripPaused && tripDistanceMeters === 0) {
         tripDistanceMeters = 0;
         tripElapsedMs = 0;
         tripMaxSpeedKmh = 0;
@@ -2416,24 +2491,32 @@
       tripStartTime = Date.now() - tripElapsedMs;
       isTripRunning = true;
       isTripPaused = false;
+      saveTripData();
 
       // Update UI elements
       const card = document.getElementById('trip-card');
-      card.classList.add('recording');
-      card.classList.remove('paused');
+      if (card) {
+        card.classList.add('recording');
+        card.classList.remove('paused');
+      }
       
       const btnMain = document.getElementById('btn-trip-toggle');
-      btnMain.className = 'btn-trip-main btn-trip-stop';
-      document.getElementById('btn-trip-icon').textContent = '⏹';
-      document.getElementById('btn-trip-text').textContent = 'STOP TRIP';
+      if (btnMain) {
+        btnMain.className = 'btn-trip-main btn-trip-stop';
+        document.getElementById('btn-trip-icon').textContent = '⏹';
+        document.getElementById('btn-trip-text').textContent = 'STOP TRIP';
+      }
 
       const btnPause = document.getElementById('btn-trip-pause');
-      btnPause.disabled = false;
-      document.getElementById('btn-pause-icon').textContent = '⏸';
-      document.getElementById('btn-pause-text').textContent = 'Pause';
+      if (btnPause) {
+        btnPause.disabled = false;
+        document.getElementById('btn-pause-icon').textContent = '⏸';
+        document.getElementById('btn-pause-text').textContent = 'Pause';
+      }
 
       setGpsStatus('acquiring', 'Acquiring GPS...');
-      showToast("Trip recording started");
+      updateTripUI();
+      showToast(tripDistanceMeters > 0 ? `Trip resumed: ${(tripDistanceMeters / 1000).toFixed(2)} km` : "Trip recording started");
       if (navigator.vibrate) navigator.vibrate([40, 50, 40]);
 
       // Request screen wake lock
@@ -2444,21 +2527,23 @@
       tripTimerInterval = setInterval(updateTripTimerAndStats, 500);
 
       // Start Geolocation watch
-      try {
-        const geoOptions = {
-          enableHighAccuracy: true,
-          maximumAge: 1000,
-          timeout: 10000
-        };
-        tripWatchId = navigator.geolocation.watchPosition(
-          handleGpsPosition,
-          handleGpsError,
-          geoOptions
-        );
-      } catch (e) {
-        console.error("GPS Watch error:", e);
-        setGpsStatus('error', 'GPS Error');
-        showToast("Could not start GPS: " + e.message);
+      if (tripWatchId === null) {
+        try {
+          const geoOptions = {
+            enableHighAccuracy: true,
+            maximumAge: 1000,
+            timeout: 10000
+          };
+          tripWatchId = navigator.geolocation.watchPosition(
+            handleGpsPosition,
+            handleGpsError,
+            geoOptions
+          );
+        } catch (e) {
+          console.error("GPS Watch error:", e);
+          setGpsStatus('error', 'GPS Error');
+          showToast("Could not start GPS: " + e.message);
+        }
       }
     }
 
@@ -2473,10 +2558,13 @@
         // PAUSE
         isTripPaused = true;
         tripElapsedMs = Date.now() - tripStartTime;
-        card.classList.remove('recording');
-        card.classList.add('paused');
-        pauseIcon.textContent = '▶';
-        pauseText.textContent = 'Resume';
+        saveTripData();
+        if (card) {
+          card.classList.remove('recording');
+          card.classList.add('paused');
+        }
+        if (pauseIcon) pauseIcon.textContent = '▶';
+        if (pauseText) pauseText.textContent = 'Resume';
         setGpsStatus('paused', 'Paused');
         lastGpsCoords = null; // Clear to prevent jumping across paused distance
         showToast("Trip paused");
@@ -2485,10 +2573,13 @@
         // RESUME
         isTripPaused = false;
         tripStartTime = Date.now() - tripElapsedMs;
-        card.classList.add('recording');
-        card.classList.remove('paused');
-        pauseIcon.textContent = '⏸';
-        pauseText.textContent = 'Pause';
+        saveTripData();
+        if (card) {
+          card.classList.add('recording');
+          card.classList.remove('paused');
+        }
+        if (pauseIcon) pauseIcon.textContent = '⏸';
+        if (pauseText) pauseText.textContent = 'Pause';
         setGpsStatus('active', 'GPS Active');
         showToast("Trip resumed");
         if (navigator.vibrate) navigator.vibrate([30, 30]);
@@ -2504,6 +2595,7 @@
 
       isTripRunning = false;
       isTripPaused = false;
+      localStorage.setItem('vesc_trip_active', 'false');
 
       // Clear watch and timer
       if (tripWatchId !== null) {
@@ -2518,21 +2610,25 @@
 
       // Update UI
       const card = document.getElementById('trip-card');
-      card.classList.remove('recording', 'paused');
+      if (card) card.classList.remove('recording', 'paused');
 
       const btnMain = document.getElementById('btn-trip-toggle');
-      btnMain.className = 'btn-trip-main btn-trip-start';
-      document.getElementById('btn-trip-icon').textContent = '▶';
-      document.getElementById('btn-trip-text').textContent = 'START TRIP';
+      if (btnMain) {
+        btnMain.className = 'btn-trip-main btn-trip-start';
+        document.getElementById('btn-trip-icon').textContent = '▶';
+        document.getElementById('btn-trip-text').textContent = 'START TRIP';
+      }
 
       const btnPause = document.getElementById('btn-trip-pause');
-      btnPause.disabled = true;
-      document.getElementById('btn-pause-icon').textContent = '⏸';
-      document.getElementById('btn-pause-text').textContent = 'Pause';
+      if (btnPause) {
+        btnPause.disabled = true;
+        document.getElementById('btn-pause-icon').textContent = '⏸';
+        document.getElementById('btn-pause-text').textContent = 'Pause';
+      }
 
       setGpsStatus('idle', 'Trip Stopped');
       updateTripTimerAndStats();
-      saveOdometer();
+      saveTripData();
 
       const distKm = (tripDistanceMeters / 1000).toFixed(2);
       const timeStr = formatDuration(tripElapsedMs);
@@ -2548,10 +2644,18 @@
       tripElapsedMs = 0;
       tripMaxSpeedKmh = 0;
       lastGpsCoords = null;
+      localStorage.setItem('vesc_trip_distance_meters', '0');
+      localStorage.setItem('vesc_trip_elapsed_ms', '0');
+      localStorage.setItem('vesc_trip_max_speed', '0');
+      localStorage.setItem('vesc_trip_active', 'false');
+
       updateTripUI();
-      document.getElementById('trip-time').textContent = '00:00:00';
-      document.getElementById('trip-avg-speed').textContent = '0.0';
-      document.getElementById('trip-max-speed').textContent = '0.0';
+      const tripTimeEl = document.getElementById('trip-time');
+      if (tripTimeEl) tripTimeEl.textContent = '00:00:00';
+      const tripAvgEl = document.getElementById('trip-avg-speed');
+      if (tripAvgEl) tripAvgEl.textContent = '0.0';
+      const tripMaxEl = document.getElementById('trip-max-speed');
+      if (tripMaxEl) tripMaxEl.textContent = '0.0';
       setGpsStatus('idle', 'GPS Ready');
       showToast("Trip metrics reset");
     }
@@ -2561,7 +2665,8 @@
       if (confirmReset) {
         totalOdometerKm = 0.0;
         saveOdometer();
-        document.getElementById('disp-odo').textContent = "0.00 km";
+        const odoEl = document.getElementById('disp-odo');
+        if (odoEl) odoEl.textContent = "0.00 km";
         showToast("Odometer reset to 0.00 km");
       }
     }
@@ -2605,7 +2710,7 @@
       if (dMeters >= minThreshold && !isDeviceStationary) {
         tripDistanceMeters += dMeters;
         totalOdometerKm += (dMeters / 1000);
-        saveOdometer();
+        saveTripData();
         lastGpsCoords = { lat: latitude, lon: longitude, timestamp: now, accuracy: accuracy };
       }
 
@@ -2614,6 +2719,7 @@
         const speedKmh = speed * 3.6;
         if (speedKmh > tripMaxSpeedKmh) {
           tripMaxSpeedKmh = speedKmh;
+          localStorage.setItem('vesc_trip_max_speed', tripMaxSpeedKmh.toString());
         }
       }
 
@@ -2649,27 +2755,61 @@
         tripElapsedMs = Date.now() - tripStartTime;
       }
 
-      document.getElementById('trip-time').textContent = formatDuration(tripElapsedMs);
+      const tripTimeEl = document.getElementById('trip-time');
+      if (tripTimeEl) tripTimeEl.textContent = formatDuration(tripElapsedMs);
 
       // Average Speed
       const elapsedHours = tripElapsedMs / 3600000;
       const distKm = tripDistanceMeters / 1000;
       const avgSpeed = (elapsedHours > 0.0005 && distKm > 0) ? (distKm / elapsedHours) : 0.0;
-      document.getElementById('trip-avg-speed').textContent = avgSpeed.toFixed(1);
+      const tripAvgEl = document.getElementById('trip-avg-speed');
+      if (tripAvgEl) tripAvgEl.textContent = avgSpeed.toFixed(1);
+
+      // Periodically persist elapsed time every 5 seconds
+      if (isTripRunning && Math.floor(tripElapsedMs / 1000) % 5 === 0) {
+        localStorage.setItem('vesc_trip_elapsed_ms', tripElapsedMs.toString());
+      }
     }
 
     function updateTripUI() {
       const distKm = tripDistanceMeters / 1000;
-      document.getElementById('trip-distance').textContent = distKm.toFixed(2);
+      const distStr = distKm.toFixed(2);
       
-      if (distKm < 1.0) {
-        document.getElementById('trip-distance-sub').textContent = `${Math.round(tripDistanceMeters)} m ridden`;
-      } else {
-        document.getElementById('trip-distance-sub').textContent = `${distKm.toFixed(3)} km ridden`;
+      const tripDistEl = document.getElementById('trip-distance');
+      if (tripDistEl) tripDistEl.textContent = distStr;
+
+      const mainTripDistEl = document.getElementById('disp-main-trip-dist');
+      if (mainTripDistEl) mainTripDistEl.textContent = distStr;
+
+      // Show/hide trip box next to telemetry on main display
+      const telemGrid = document.querySelector('.telem-grid');
+      const telemTripBox = document.getElementById('telem-box-trip');
+      const isTripActiveOrSaved = isTripRunning || tripDistanceMeters > 0 || (localStorage.getItem('vesc_trip_active') === 'true');
+
+      if (telemGrid && telemTripBox) {
+        if (isTripActiveOrSaved) {
+          telemGrid.classList.add('trip-enabled');
+          telemTripBox.style.display = 'flex';
+        } else {
+          telemGrid.classList.remove('trip-enabled');
+          telemTripBox.style.display = 'none';
+        }
+      }
+      
+      const tripDistSub = document.getElementById('trip-distance-sub');
+      if (tripDistSub) {
+        if (distKm < 1.0) {
+          tripDistSub.textContent = `${Math.round(tripDistanceMeters)} m ridden`;
+        } else {
+          tripDistSub.textContent = `${distKm.toFixed(3)} km ridden`;
+        }
       }
 
-      document.getElementById('trip-max-speed').textContent = tripMaxSpeedKmh.toFixed(1);
-      document.getElementById('disp-odo').textContent = totalOdometerKm.toFixed(2) + " km";
+      const tripMaxEl = document.getElementById('trip-max-speed');
+      if (tripMaxEl) tripMaxEl.textContent = tripMaxSpeedKmh.toFixed(1);
+
+      const odoEl = document.getElementById('disp-odo');
+      if (odoEl) odoEl.textContent = totalOdometerKm.toFixed(2) + " km";
     }
 
     function formatDuration(ms) {
@@ -2683,8 +2823,8 @@
     function setGpsStatus(statusType, label) {
       const badge = document.getElementById('gps-status-badge');
       const text = document.getElementById('gps-status-text');
-      badge.className = `gps-badge gps-${statusType}`;
-      text.textContent = label;
+      if (badge) badge.className = `gps-badge gps-${statusType}`;
+      if (text) text.textContent = label;
     }
 
     async function requestWakeLock() {
