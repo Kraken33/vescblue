@@ -3,6 +3,7 @@
     "name": "Scooter BLE",
     "slug": "scooter-ble",
     "version": "1.0.0",
+    "newArchEnabled": false,
     "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",

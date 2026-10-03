@@ -9,6 +9,7 @@ import {
   Platform,
   PermissionsAndroid,
   useWindowDimensions,
+  NativeModules,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
@@ -22,11 +23,18 @@ import { Buffer } from 'buffer';
 const BLE_SVC_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
 const BLE_CONSOLE_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 
-// BleManager instance singleton
+// BleManager instance singleton (safe for iOS Simulator where Bluetooth is unavailable)
 let bleManager: BleManager | null = null;
-const getBleManager = () => {
+
+const getBleManager = (): BleManager | null => {
+  if (!NativeModules.BlePlx) return null;
   if (!bleManager) {
-    bleManager = new BleManager();
+    try {
+      bleManager = new BleManager();
+    } catch (err) {
+      console.warn('BleManager initialization skipped or failed:', err);
+      return null;
+    }
   }
   return bleManager;
 };
@@ -55,6 +63,9 @@ export default function App() {
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleLines, setConsoleLines] = useState<string[]>(['Scooter Native BLE Ready']);
   const [customCmd, setCustomCmd] = useState('');
+
+  const [isDemoMode, setIsDemoMode] = useState(false);
+  const demoIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   // Refs for subscriptions and active characteristic
   const charRef = useRef<Characteristic | null>(null);
@@ -97,6 +108,30 @@ export default function App() {
   // Connect BLE
   const connectBle = async () => {
     const manager = getBleManager();
+    if (!manager) {
+      // In iOS Simulator, Bluetooth hardware does not exist
+      setIsDemoMode(true);
+      setIsConnected(true);
+      setStatusText('Simulator Demo (Active)');
+      addConsole('[SIMULATOR] CoreBluetooth is unavailable on iOS Simulator.');
+      addConsole('[SIMULATOR] Starting live cockpit demonstration...');
+      activateKeepAwakeAsync();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      let step = 0;
+      if (demoIntervalRef.current) clearInterval(demoIntervalRef.current);
+      demoIntervalRef.current = setInterval(() => {
+        step++;
+        const simSpeed = Math.min(25, Math.abs(Math.sin(step * 0.1) * 28));
+        const simAmps = simSpeed > 2 ? Math.min(35, simSpeed * 1.2 + Math.random() * 2) : 0;
+        const simVolt = 41.6 - simSpeed * 0.04;
+        setSpeed(simSpeed);
+        setVoltage(simVolt.toFixed(1));
+        setTargetAmps(simAmps.toFixed(1));
+        setThrottleRaw(simSpeed > 0 ? String(Math.floor(simSpeed * 110 + 850)) : '850');
+      }, 200);
+      return;
+    }
     try {
       setIsScanning(true);
       setStatusText('Scanning for Scooter-ESP32...');
@@ -182,6 +217,11 @@ export default function App() {
   };
 
   const disconnect = async () => {
+    if (demoIntervalRef.current) {
+      clearInterval(demoIntervalRef.current);
+      demoIntervalRef.current = null;
+    }
+    setIsDemoMode(false);
     if (notifSubRef.current) {
       notifSubRef.current.remove();
       notifSubRef.current = null;
@@ -240,6 +280,15 @@ export default function App() {
 
   // Outgoing BLE commands
   const sendCmd = async (cmdStr: string) => {
+    if (isDemoMode) {
+      addConsole(`[SIM-TX] ${cmdStr}`);
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (cmdStr.startsWith('P ')) {
+        const g = parseInt(cmdStr.split(' ')[1], 10);
+        if (g >= 1 && g <= 4) setActiveGear(g);
+      }
+      return;
+    }
     if (!charRef.current) return;
     if (isWritingRef.current) return;
     isWritingRef.current = true;
