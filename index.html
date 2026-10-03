@@ -1873,6 +1873,16 @@
         document.getElementById('brake-amp-val').textContent = bc.toFixed(1) + " A";
       }
 
+      const kerpmMatch = str.match(/KERPM=([\d.]+)/);
+      if (kerpmMatch) {
+        const kerpm = parseFloat(kerpmMatch[1]);
+        isZeroStart = (kerpm === 0);
+        const btnText = document.getElementById('btn-kick-text');
+        if (btnText) {
+          btnText.textContent = isZeroStart ? "Zero Start: ON" : "Push-to-Start: ON";
+        }
+      }
+
       if (kickMatch) {
         const isHeld = kickMatch[1] === "HELD";
         const badge = document.getElementById('badge-kick');
@@ -1882,7 +1892,7 @@
           text.textContent = "PUSH TO START";
         } else {
           badge.classList.add('active-kick');
-          text.textContent = "ZERO START";
+          text.textContent = isZeroStart ? "ZERO START" : "ROLLING";
         }
       }
     }
@@ -1943,6 +1953,19 @@
       const bannerSub = document.getElementById('garmin-banner-sub');
 
       if (!isGarminEnabled) {
+        if (locked) {
+          if (badge) {
+            badge.className = 'badge active-locked';
+            badge.innerHTML = '<span>🔒</span> <span id="lock-text">SCOOTER LOCKED</span>';
+          }
+          if (banner) {
+            banner.className = 'garmin-banner locked';
+            bannerIcon.textContent = '🔒';
+            bannerTitle.textContent = 'SCOOTER MANUALLY LOCKED';
+            bannerSub.textContent = 'Throttle & Wheels Locked • Press Unlock to ride';
+          }
+          return;
+        }
         if (badge) {
           badge.className = 'badge';
           badge.innerHTML = '<span>🔓</span> <span id="lock-text">AUTO-LOCK OFF</span>';
@@ -1951,7 +1974,7 @@
           banner.className = 'garmin-banner disabled';
           bannerIcon.textContent = '🛡️';
           bannerTitle.textContent = 'AUTO-LOCK DISABLED';
-          bannerSub.textContent = 'Enable to lock scooter when watch is away';
+          bannerSub.textContent = 'Enable to lock scooter when iPhone is away';
         }
         return;
       }
@@ -1965,7 +1988,7 @@
           banner.className = 'garmin-banner locked';
           bannerIcon.textContent = '🔒';
           bannerTitle.textContent = 'SCOOTER LOCKED (SAFE)';
-          bannerSub.textContent = 'Garmin out of range • Throttle & Wheels Locked';
+          bannerSub.textContent = 'iPhone out of range • Throttle & Wheels Locked';
         }
       } else {
         if (badge) {
@@ -1976,7 +1999,7 @@
           banner.className = 'garmin-banner unlocked';
           bannerIcon.textContent = '🔓';
           bannerTitle.textContent = 'SCOOTER UNLOCKED';
-          bannerSub.textContent = 'Garmin Watch in proximity • Ready to ride';
+          bannerSub.textContent = 'iPhone in proximity • Ready to ride';
         }
       }
     }
@@ -2135,14 +2158,10 @@
     }
 
     function toggleKickStart() {
-      isZeroStart = !isZeroStart;
-      const btnText = document.getElementById('btn-kick-text');
       if (isZeroStart) {
-        sendCmd('K 0');
-        btnText.textContent = "Zero Start: ON";
-      } else {
         sendCmd('K 400');
-        btnText.textContent = "Push-to-Start: ON";
+      } else {
+        sendCmd('K 0');
       }
     }
 

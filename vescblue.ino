@@ -156,7 +156,8 @@ String garminTargetName = "";         // Target Garmin device name (e.g. "Foreru
 int garminRssiThreshold = -85;        // Distance sensitivity threshold in dBm (-95 = far, -70 = near)
 int garminTimeoutSeconds = 6;         // Absence timeout before locking (3 - 15s)
 bool isScooterLocked = false;         // Live lock state: disables throttle & locks wheels
-bool manualOverrideUnlocked = false;  // App override toggle
+bool manualOverrideUnlocked = false;  // App override toggle (UNLOCK command)
+bool manualLocked = false;            // Explicit manual lock toggle (LOCK command)
 bool garminNear = false;              // Watch detected within RSSI range and recent time
 int lastGarminRssi = -120;            // Live RSSI
 unsigned long lastGarminSeenMs = 0;   // Timestamp of last received Garmin advertisement
@@ -568,11 +569,22 @@ void processDisplayUart(float speedMps) {
 }
 
 // =========================================================================
-// Proximity Scanner & Anti-Theft Callbacks (iPhone & Garmin)
+// Proximity Scanner & Anti-Theft Callbacks (iPhone Proximity Key)
 // =========================================================================
+static bool matchDeviceName(const String &advertisedName, const String &target) {
+  if (advertisedName.length() == 0 || target.length() == 0) return false;
+  String a = advertisedName;
+  String t = target;
+  a.toLowerCase();
+  t.toLowerCase();
+  a.replace("’", "'");
+  t.replace("’", "'");
+  return a.indexOf(t) >= 0;
+}
+
 class GarminScanCallbacks : public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    bool isGarminMatch = false;
+    bool isMatch = false;
     String devName = "";
     if (advertisedDevice.haveName()) {
       devName = String(advertisedDevice.getName().c_str());
@@ -581,58 +593,25 @@ class GarminScanCallbacks : public BLEAdvertisedDeviceCallbacks {
     devMac.toUpperCase();
 
     // 1. Target MAC configured
-    if (garminTargetMac.length() > 0) {
+    if (garminTargetMac.length() > 0 && garminTargetMac != "AUTO") {
       if (devMac.equalsIgnoreCase(garminTargetMac)) {
-        isGarminMatch = true;
+        isMatch = true;
       }
     }
-    // 2. Target Name configured (e.g. "Kirill", "iPhone", "Garmin")
-    else if (garminTargetName.length() > 0) {
-      if (devName.length() > 0) {
-        String lowerName = devName;
-        lowerName.toLowerCase();
-        String lowerTarget = garminTargetName;
-        lowerTarget.toLowerCase();
-        if (lowerName.indexOf(lowerTarget) >= 0) {
-          isGarminMatch = true;
-        }
+    // 2. Target Name configured (e.g. "Kirill", "iPhone")
+    else if (garminTargetName.length() > 0 && garminTargetName != "AUTO") {
+      if (matchDeviceName(devName, garminTargetName)) {
+        isMatch = true;
       }
     }
-    // 3. Auto-Detect: iPhone / Apple (0x004C), Kirill's iPhone, or Garmin
+    // 3. AUTO Mode: Match "Kirill" or "iPhone" in advertised device name
     else {
-      if (devName.length() > 0) {
-        String lowerName = devName;
-        lowerName.toLowerCase();
-        if (lowerName.indexOf("iphone") >= 0 ||
-            lowerName.indexOf("kirill") >= 0 ||
-            lowerName.indexOf("garmin") >= 0 ||
-            lowerName.indexOf("forerunner") >= 0 ||
-            lowerName.indexOf("fenix") >= 0 ||
-            lowerName.indexOf("epix") >= 0 ||
-            lowerName.indexOf("venu") >= 0 ||
-            lowerName.indexOf("instinct") >= 0 ||
-            lowerName.indexOf("vivo") >= 0 ||
-            lowerName.indexOf("enduro") >= 0 ||
-            lowerName.indexOf("tactix") >= 0 ||
-            lowerName.indexOf("marq") >= 0 ||
-            lowerName.indexOf("apple") >= 0 ||
-            lowerName.indexOf("watch") >= 0) {
-          isGarminMatch = true;
-        }
-      }
-      if (!isGarminMatch && advertisedDevice.haveManufacturerData()) {
-        String mData = advertisedDevice.getManufacturerData();
-        if (mData.length() >= 2) {
-          uint16_t companyId = (uint8_t)mData[0] | ((uint16_t)(uint8_t)mData[1] << 8);
-          // 0x004C = Apple Inc. (iPhone), 0x0087 = Garmin, 0x006B = Garmin/ANT
-          if (companyId == 0x004C || companyId == 0x0087 || companyId == 0x006B) {
-            isGarminMatch = true;
-          }
-        }
+      if (matchDeviceName(devName, "Kirill") || matchDeviceName(devName, "iPhone")) {
+        isMatch = true;
       }
     }
 
-    if (isGarminMatch) {
+    if (isMatch) {
       int rssi = advertisedDevice.getRSSI();
       lastGarminSeenMs = millis();
       lastGarminRssi = rssi;
@@ -661,13 +640,13 @@ void garminScanTaskLoop(void *param) {
   pBLEScan->setAdvertisedDeviceCallbacks(new GarminScanCallbacks(), true);
   pBLEScan->setActiveScan(true);
   pBLEScan->setInterval(100);
-  pBLEScan->setWindow(60);
+  pBLEScan->setWindow(80);
 
   while (true) {
     if (garminLockEnabled || garminLearnActive) {
       pBLEScan->start(2, false);
-      vTaskDelay(pdMS_TO_TICKS(2200));
       pBLEScan->clearResults();
+      vTaskDelay(pdMS_TO_TICKS(100)); // Brief 100ms yield between scans
 
       if (garminLearnActive && (millis() - garminLearnStartTime > 10000)) {
         garminLearnActive = false;
@@ -680,26 +659,29 @@ void garminScanTaskLoop(void *param) {
 }
 
 void updateGarminLockState() {
+  // 1. Explicit Manual Lock takes highest priority
+  if (manualLocked) {
+    isScooterLocked = true;
+    return;
+  }
+
+  // 2. If Proximity Auto-Lock is disabled, scooter is unlocked
   if (!garminLockEnabled) {
     isScooterLocked = false;
     garminNear = true;
     return;
   }
 
-  if (manualOverrideUnlocked) {
-    isScooterLocked = false;
-    return;
-  }
-
-  // If iPhone is actively connected over Web Bluetooth to the dashboard, scooter is UNLOCKED
+  // 3. Proximity Auto-Lock is ENABLED:
+  // If iPhone is actively connected over Web Bluetooth to dashboard, phone is present
   if (bleClientConnected) {
     lastGarminSeenMs = millis();
-    lastGarminRssi = -55;
     garminNear = true;
     isScooterLocked = false;
     return;
   }
 
+  // 4. Proximity Auto-Lock evaluation based on real scan data
   unsigned long now = millis();
   unsigned long timeoutMs = (unsigned long)garminTimeoutSeconds * 1000UL;
   bool recentlySeen = (lastGarminSeenMs > 0) && ((now - lastGarminSeenMs) <= timeoutMs);
@@ -730,12 +712,12 @@ void blePushLine(const String &line) {
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
     char buf[250];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d LOCK=%d GEN=%d GRSSI=%d",
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d KERPM=%.0f LOCK=%d GEN=%d GRSSI=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId,
-             isScooterLocked ? 1 : 0, garminLockEnabled ? 1 : 0, (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120);
+             KICK_RPM_ERPM, isScooterLocked ? 1 : 0, garminLockEnabled ? 1 : 0, (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120);
     blePushLine(String(buf));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
@@ -826,9 +808,9 @@ void bleHandleCommand(const String &cmd) {
     int en = cmd.substring(4).toInt();
     garminLockEnabled = (en != 0);
     prefs.putBool("garmin_en", garminLockEnabled);
-    if (!garminLockEnabled) {
+    manualOverrideUnlocked = false;
+    if (!garminLockEnabled && !manualLocked) {
       isScooterLocked = false;
-      manualOverrideUnlocked = false;
     }
     blePushLine("GARMIN LOCK " + String(garminLockEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("GMAC ")) {
@@ -875,13 +857,16 @@ void bleHandleCommand(const String &cmd) {
     garminLearnStartTime = millis();
     blePushLine("GARMIN AUTO-LEARN ACTIVE (Bring watch close for 10s...)");
   } else if (cmd == "GLOCK" || cmd == "LOCK") {
+    manualLocked = true;
     manualOverrideUnlocked = false;
     isScooterLocked = true;
     blePushLine("SCOOTER MANUALLY LOCKED");
   } else if (cmd == "GUNLOCK" || cmd == "UNLOCK") {
-    manualOverrideUnlocked = true;
+    manualLocked = false;
+    manualOverrideUnlocked = false;
     isScooterLocked = false;
-    blePushLine("SCOOTER MANUALLY UNLOCKED (Override)");
+    lastGarminSeenMs = millis();
+    blePushLine("SCOOTER MANUALLY UNLOCKED");
   } else if (cmd == "GARMIN") {
     char gbuf[220];
     snprintf(gbuf, sizeof(gbuf), "GARMIN: EN=%d LOCK=%d NEAR=%d RSSI=%d THOLD=%d TO=%ds MAC=%s NAME=%s LAST_MAC=%s LAST_NAME=%s",
@@ -908,6 +893,9 @@ void bleHandleCommand(const String &cmd) {
     if (k >= 0 && k < 5000) {
       KICK_RPM_ERPM = k;
       prefs.putFloat("kick_erpm", KICK_RPM_ERPM);
+      if (KICK_RPM_ERPM == 0.0f) {
+        kickBlocked = false;
+      }
       blePushLine("KICK " + String(KICK_RPM_ERPM, 0));
     } else {
       blePushLine("ERR kick range 0..5000");
@@ -987,10 +975,19 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *) { bleClientConnected = true; }
+  void onConnect(BLEServer *) {
+    bleClientConnected = true;
+    lastGarminSeenMs = millis();
+  }
   void onDisconnect(BLEServer *) {
     bleClientConnected = false;
     bleOtaActive = false;
+    lastGarminSeenMs = 0;
+    lastGarminRssi = -120;
+    garminNear = false;
+    if (garminLockEnabled) {
+      isScooterLocked = true;
+    }
     bleServer->getAdvertising()->start();
   }
 };
@@ -1034,9 +1031,9 @@ void setup() {
 
   garminLockEnabled = prefs.getBool("garmin_en", false);
   garminTargetMac = prefs.getString("garmin_mac", "");
-  garminTargetName = prefs.getString("garmin_name", "");
+  garminTargetName = prefs.getString("garmin_name", "Kirill");
   garminRssiThreshold = prefs.getInt("garmin_rssi", -85);
-  garminTimeoutSeconds = prefs.getInt("garmin_to", 6);
+  garminTimeoutSeconds = prefs.getInt("garmin_to", 5);
 
   // Set internal pullup/pulldown on configured brake pin
   if (brakePin > 0) {
@@ -1202,11 +1199,11 @@ void loop() {
   // 8. BLE notify live line at 5 Hz
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[190];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s LOCK=%d GRSSI=%d GEN=%d",
+    char buf[210];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s KERPM=%.0f LOCK=%d GRSSI=%d GEN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL",
+             targetAmps, kickBlocked ? "HELD" : "ROLL", KICK_RPM_ERPM,
              isScooterLocked ? 1 : 0,
              (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
              garminLockEnabled ? 1 : 0);
