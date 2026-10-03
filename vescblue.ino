@@ -4,6 +4,8 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <BLEScan.h>
+#include <BLEAdvertisedDevice.h>
 #include <Update.h>
 #include <Preferences.h>
 
@@ -12,9 +14,10 @@
 // =========================================================================
 #define THROTTLE_PIN 34
 
-// Default Brake Pin & Dual-pin support (GPIO 19 and GPIO 21)
-int brakePin = 0; // 0 = Dual pin (both 19 and 21), or specify 19 or 21
+// Brake Sensor Configuration (GPIO 19 single pin default)
+int brakePin = 19;          // Default GPIO 19 (Single brake pin)
 bool brakeActiveLow = true; // true = Active LOW (pulls to GND when brake engaged)
+bool brakeEnabled = true;   // Master software toggle to enable/disable e-brake sensor
 
 // Display UART (UART1) on GPIO 22 (RX) and GPIO 23 (TX) at 1200 Baud
 #define PIN_DISPLAY_RX 22
@@ -137,14 +140,35 @@ uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
 DriveProfile activeProfile = PROFILE_1;
 
 // =========================================================================
-// Throttle & Brake State
+// Battery & Power Telemetry
 // =========================================================================
+float batteryVoltage = 0.0f;       // Actual battery input voltage from VESC (V)
+float batteryCurrent = 0.0f;       // Battery input current from VESC (A)
+float throttleVoltage = 0.0f;      // Analog throttle voltage (0.0 - 3.3V)
+int currentRawThrottle = 0;
+
+// =========================================================================
+// Garmin Watch Proximity & Anti-Theft Lock
+// =========================================================================
+bool garminLockEnabled = false;       // Master toggle for Garmin proximity auto-lock
+String garminTargetMac = "";          // Target Garmin BLE MAC (e.g. "AA:BB:CC:DD:EE:FF" or "" for auto)
+String garminTargetName = "";         // Target Garmin device name (e.g. "Forerunner" or "" for auto)
+int garminRssiThreshold = -85;        // Distance sensitivity threshold in dBm (-95 = far, -70 = near)
+int garminTimeoutSeconds = 6;         // Absence timeout before locking (3 - 15s)
+bool isScooterLocked = false;         // Live lock state: disables throttle & locks wheels
+bool manualOverrideUnlocked = false;  // App override toggle
+bool garminNear = false;              // Watch detected within RSSI range and recent time
+int lastGarminRssi = -120;            // Live RSSI
+unsigned long lastGarminSeenMs = 0;   // Timestamp of last received Garmin advertisement
+String lastGarminDetectedMac = "";
+String lastGarminDetectedName = "";
+bool garminLearnActive = false;
+unsigned long garminLearnStartTime = 0;
+
+// Throttle & Brake State
 bool testModeActive = false;
 float testVoltage = 1.0f;
 bool testBrakeState = false;
-
-float currentVoltageReading = 0.0f;
-int currentRawThrottle = 0;
 
 bool rawBrakePinState = false;
 bool debouncedBrakeState = false;
@@ -360,6 +384,21 @@ void processVescIncoming() {
             vehicleSpeedMps = fabs(vescRpm57) * ERPM_TO_MPS;
             vehicleSpeedKmH = fabs(vescRpm57) * ERPM_TO_KMH;
             kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
+
+            // Unpack Input Battery Voltage (bytes 27-28 in COMM_GET_VALUES payload)
+            if (payloadLen >= 29) {
+              int16_t vInRaw = (int16_t)(((uint16_t)vescRxBuf[29] << 8) | (uint16_t)vescRxBuf[30]);
+              batteryVoltage = (float)vInRaw / 10.0f;
+            }
+
+            // Unpack Input Battery Current (bytes 9-12 in COMM_GET_VALUES payload)
+            if (payloadLen >= 13) {
+              int32_t currInRaw = ((int32_t)vescRxBuf[11] << 24) |
+                                  ((int32_t)vescRxBuf[12] << 16) |
+                                  ((int32_t)vescRxBuf[13] << 8)  |
+                                  ((int32_t)vescRxBuf[14]);
+              batteryCurrent = (float)currInRaw / 100.0f;
+            }
           }
         }
         vescRxIdx = 0;
@@ -529,6 +568,156 @@ void processDisplayUart(float speedMps) {
 }
 
 // =========================================================================
+// Proximity Scanner & Anti-Theft Callbacks (iPhone & Garmin)
+// =========================================================================
+class GarminScanCallbacks : public BLEAdvertisedDeviceCallbacks {
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    bool isGarminMatch = false;
+    String devName = "";
+    if (advertisedDevice.haveName()) {
+      devName = String(advertisedDevice.getName().c_str());
+    }
+    String devMac = String(advertisedDevice.getAddress().toString().c_str());
+    devMac.toUpperCase();
+
+    // 1. Target MAC configured
+    if (garminTargetMac.length() > 0) {
+      if (devMac.equalsIgnoreCase(garminTargetMac)) {
+        isGarminMatch = true;
+      }
+    }
+    // 2. Target Name configured (e.g. "Kirill", "iPhone", "Garmin")
+    else if (garminTargetName.length() > 0) {
+      if (devName.length() > 0) {
+        String lowerName = devName;
+        lowerName.toLowerCase();
+        String lowerTarget = garminTargetName;
+        lowerTarget.toLowerCase();
+        if (lowerName.indexOf(lowerTarget) >= 0) {
+          isGarminMatch = true;
+        }
+      }
+    }
+    // 3. Auto-Detect: iPhone / Apple (0x004C), Kirill's iPhone, or Garmin
+    else {
+      if (devName.length() > 0) {
+        String lowerName = devName;
+        lowerName.toLowerCase();
+        if (lowerName.indexOf("iphone") >= 0 ||
+            lowerName.indexOf("kirill") >= 0 ||
+            lowerName.indexOf("garmin") >= 0 ||
+            lowerName.indexOf("forerunner") >= 0 ||
+            lowerName.indexOf("fenix") >= 0 ||
+            lowerName.indexOf("epix") >= 0 ||
+            lowerName.indexOf("venu") >= 0 ||
+            lowerName.indexOf("instinct") >= 0 ||
+            lowerName.indexOf("vivo") >= 0 ||
+            lowerName.indexOf("enduro") >= 0 ||
+            lowerName.indexOf("tactix") >= 0 ||
+            lowerName.indexOf("marq") >= 0 ||
+            lowerName.indexOf("apple") >= 0 ||
+            lowerName.indexOf("watch") >= 0) {
+          isGarminMatch = true;
+        }
+      }
+      if (!isGarminMatch && advertisedDevice.haveManufacturerData()) {
+        String mData = advertisedDevice.getManufacturerData();
+        if (mData.length() >= 2) {
+          uint16_t companyId = (uint8_t)mData[0] | ((uint16_t)(uint8_t)mData[1] << 8);
+          // 0x004C = Apple Inc. (iPhone), 0x0087 = Garmin, 0x006B = Garmin/ANT
+          if (companyId == 0x004C || companyId == 0x0087 || companyId == 0x006B) {
+            isGarminMatch = true;
+          }
+        }
+      }
+    }
+
+    if (isGarminMatch) {
+      int rssi = advertisedDevice.getRSSI();
+      lastGarminSeenMs = millis();
+      lastGarminRssi = rssi;
+      lastGarminDetectedMac = devMac;
+      if (devName.length() > 0) {
+        lastGarminDetectedName = devName;
+      }
+
+      // If Auto-Learn mode is active, lock onto this phone / device
+      if (garminLearnActive) {
+        garminTargetMac = devMac;
+        if (devName.length() > 0) {
+          garminTargetName = devName;
+        }
+        prefs.putString("garmin_mac", garminTargetMac);
+        prefs.putString("garmin_name", garminTargetName);
+        garminLearnActive = false;
+        blePushLine("KEY:LEARNED MAC=" + garminTargetMac + " NAME=" + garminTargetName);
+      }
+    }
+  }
+};
+
+void garminScanTaskLoop(void *param) {
+  BLEScan *pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new GarminScanCallbacks(), true);
+  pBLEScan->setActiveScan(true);
+  pBLEScan->setInterval(100);
+  pBLEScan->setWindow(60);
+
+  while (true) {
+    if (garminLockEnabled || garminLearnActive) {
+      pBLEScan->start(2, false);
+      vTaskDelay(pdMS_TO_TICKS(2200));
+      pBLEScan->clearResults();
+
+      if (garminLearnActive && (millis() - garminLearnStartTime > 10000)) {
+        garminLearnActive = false;
+        blePushLine("KEY:LEARN_TIMEOUT");
+      }
+    } else {
+      vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+  }
+}
+
+void updateGarminLockState() {
+  if (!garminLockEnabled) {
+    isScooterLocked = false;
+    garminNear = true;
+    return;
+  }
+
+  if (manualOverrideUnlocked) {
+    isScooterLocked = false;
+    return;
+  }
+
+  // If iPhone is actively connected over Web Bluetooth to the dashboard, scooter is UNLOCKED
+  if (bleClientConnected) {
+    lastGarminSeenMs = millis();
+    lastGarminRssi = -55;
+    garminNear = true;
+    isScooterLocked = false;
+    return;
+  }
+
+  unsigned long now = millis();
+  unsigned long timeoutMs = (unsigned long)garminTimeoutSeconds * 1000UL;
+  bool recentlySeen = (lastGarminSeenMs > 0) && ((now - lastGarminSeenMs) <= timeoutMs);
+
+  if (recentlySeen) {
+    if (lastGarminRssi >= garminRssiThreshold) {
+      garminNear = true;
+    } else if (lastGarminRssi < (garminRssiThreshold - 5)) {
+      garminNear = false;
+    }
+  } else {
+    garminNear = false;
+  }
+
+  isScooterLocked = !garminNear;
+}
+
+// =========================================================================
 // BLE Callbacks & Commands
 // =========================================================================
 void blePushLine(const String &line) {
@@ -540,12 +729,13 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[220];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[250];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d LOCK=%d GEN=%d GRSSI=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
-             digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
+             digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId,
+             isScooterLocked ? 1 : 0, garminLockEnabled ? 1 : 0, (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120);
     blePushLine(String(buf));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
@@ -575,6 +765,18 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR profile 1..4 (1=10km/h, 2=15km/h, 3=25km/h, 4=40km/h)");
     }
+  } else if (cmd.startsWith("BEN ")) {
+    int en = cmd.substring(4).toInt();
+    brakeEnabled = (en != 0);
+    prefs.putBool("brake_en", brakeEnabled);
+    if (!brakeEnabled) {
+      debouncedBrakeState = false;
+      rawBrakePinState = false;
+      brakeHistory = 0x00;
+      sendBrakeFlagToSlave(false);
+      lastSentBrakeState = false;
+    }
+    blePushLine("BRAKE SENSOR " + String(brakeEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
     if (p == 0 || p == 19 || p == 21 || p == 18 || p == 5 || p == 4) {
@@ -584,17 +786,23 @@ void bleHandleCommand(const String &cmd) {
         pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
         blePushLine("BRAKE PIN set to GPIO " + String(brakePin));
       } else {
+        pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+        pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
         blePushLine("BRAKE PIN set to DUAL (both GPIO 19 and 21)");
       }
     } else {
-      blePushLine("ERR valid pins: 0 (dual), 19, 21, 18, 5, 4");
+      blePushLine("ERR valid pins: 19, 21, 18, 5, 4, 0 (dual)");
     }
   } else if (cmd.startsWith("BPOL ")) {
     int pol = cmd.substring(5).toInt();
     brakeActiveLow = (pol != 0);
     prefs.putBool("brake_low", brakeActiveLow);
-    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    if (brakePin > 0) {
+      pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    } else {
+      pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+      pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    }
     blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow ? "Active LOW (GND)" : "Active HIGH (3.3V)"));
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
@@ -614,6 +822,76 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR CAN ID range 0..255 (0=disabled)");
     }
+  } else if (cmd.startsWith("GEN ")) {
+    int en = cmd.substring(4).toInt();
+    garminLockEnabled = (en != 0);
+    prefs.putBool("garmin_en", garminLockEnabled);
+    if (!garminLockEnabled) {
+      isScooterLocked = false;
+      manualOverrideUnlocked = false;
+    }
+    blePushLine("GARMIN LOCK " + String(garminLockEnabled ? "ENABLED" : "DISABLED"));
+  } else if (cmd.startsWith("GMAC ")) {
+    String mac = cmd.substring(5);
+    mac.trim();
+    mac.toUpperCase();
+    if (mac == "0" || mac == "CLEAR" || mac == "NONE" || mac == "AUTO") {
+      garminTargetMac = "";
+    } else {
+      garminTargetMac = mac;
+    }
+    prefs.putString("garmin_mac", garminTargetMac);
+    blePushLine("GARMIN MAC set to " + (garminTargetMac.length() > 0 ? garminTargetMac : "AUTO"));
+  } else if (cmd.startsWith("GNAME ")) {
+    String gname = cmd.substring(6);
+    gname.trim();
+    if (gname == "0" || gname == "CLEAR" || gname == "NONE" || gname == "AUTO") {
+      garminTargetName = "";
+    } else {
+      garminTargetName = gname;
+    }
+    prefs.putString("garmin_name", garminTargetName);
+    blePushLine("GARMIN NAME set to " + (garminTargetName.length() > 0 ? garminTargetName : "AUTO"));
+  } else if (cmd.startsWith("GRSSI ")) {
+    int r = cmd.substring(6).toInt();
+    if (r >= -110 && r <= -30) {
+      garminRssiThreshold = r;
+      prefs.putInt("garmin_rssi", garminRssiThreshold);
+      blePushLine("GARMIN RSSI set to " + String(garminRssiThreshold) + " dBm");
+    } else {
+      blePushLine("ERR rssi range -110..-30");
+    }
+  } else if (cmd.startsWith("GTO ")) {
+    int to = cmd.substring(4).toInt();
+    if (to >= 2 && to <= 60) {
+      garminTimeoutSeconds = to;
+      prefs.putInt("garmin_to", garminTimeoutSeconds);
+      blePushLine("GARMIN TIMEOUT set to " + String(garminTimeoutSeconds) + " s");
+    } else {
+      blePushLine("ERR timeout range 2..60");
+    }
+  } else if (cmd == "GLEARN") {
+    garminLearnActive = true;
+    garminLearnStartTime = millis();
+    blePushLine("GARMIN AUTO-LEARN ACTIVE (Bring watch close for 10s...)");
+  } else if (cmd == "GLOCK" || cmd == "LOCK") {
+    manualOverrideUnlocked = false;
+    isScooterLocked = true;
+    blePushLine("SCOOTER MANUALLY LOCKED");
+  } else if (cmd == "GUNLOCK" || cmd == "UNLOCK") {
+    manualOverrideUnlocked = true;
+    isScooterLocked = false;
+    blePushLine("SCOOTER MANUALLY UNLOCKED (Override)");
+  } else if (cmd == "GARMIN") {
+    char gbuf[220];
+    snprintf(gbuf, sizeof(gbuf), "GARMIN: EN=%d LOCK=%d NEAR=%d RSSI=%d THOLD=%d TO=%ds MAC=%s NAME=%s LAST_MAC=%s LAST_NAME=%s",
+             garminLockEnabled ? 1 : 0, isScooterLocked ? 1 : 0, garminNear ? 1 : 0,
+             (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120,
+             garminRssiThreshold, garminTimeoutSeconds,
+             garminTargetMac.length() > 0 ? garminTargetMac.c_str() : "AUTO",
+             garminTargetName.length() > 0 ? garminTargetName.c_str() : "AUTO",
+             lastGarminDetectedMac.c_str(), lastGarminDetectedName.c_str());
+    blePushLine(String(gbuf));
   } else if (cmd == "T") {
     testModeActive = false;
     blePushLine("TEST off");
@@ -654,7 +932,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | K kick | R reboot");
+    blePushLine("S status | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin_lock | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk_en | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -748,16 +1026,30 @@ void setup() {
 
   prefs.begin("scooter", false);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
-  brakePin = prefs.getInt("brake_pin", 0);           // Default 0 = Dual pin (both 19 and 21)
+  brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
+  brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
   slaveCanId = prefs.getUChar("can_slave", 61);      // Default CAN ID 61
 
-  // Set internal pullup/pulldown on both candidate brake pins (19 and 21)
-  pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  garminLockEnabled = prefs.getBool("garmin_en", false);
+  garminTargetMac = prefs.getString("garmin_mac", "");
+  garminTargetName = prefs.getString("garmin_name", "");
+  garminRssiThreshold = prefs.getInt("garmin_rssi", -85);
+  garminTimeoutSeconds = prefs.getInt("garmin_to", 6);
+
+  // Set internal pullup/pulldown on configured brake pin
+  if (brakePin > 0) {
+    pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  } else if (brakePin == 0) {
+    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  }
 
   bleInit();
+
+  // Background Garmin BLE proximity scanner task on Core 0
+  xTaskCreatePinnedToCore(garminScanTaskLoop, "garminScanTask", 4096, NULL, 1, NULL, 0);
 
   // UART2 connected to VESC Master at 115200 Baud (RX=16, TX=17)
   VescSerial.begin(115200, SERIAL_8N1, 16, 17);
@@ -779,32 +1071,38 @@ void loop() {
 
   // 3. Fast Brake Sensor Reading & Hardware Glitch Filter
   if (testModeActive) {
-    debouncedBrakeState = testBrakeState;
+    debouncedBrakeState = testBrakeState && brakeEnabled;
     currentRawThrottle = (int)((testVoltage / 3.3f) * 4095.0f);
   } else {
-    // Sample brake pin every 4ms into a rolling bit-history
-    if (now - lastBrakeSampleTime >= 4) {
-      lastBrakeSampleTime = now;
-      bool rawReading = false;
-      if (brakePin == 0) {
-        // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
-        bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
-        bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
-        rawReading = p19 || p21;
-      } else {
-        rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
-      }
+    if (!brakeEnabled) {
+      debouncedBrakeState = false;
+      rawBrakePinState = false;
+      brakeHistory = 0x00;
+    } else {
+      // Sample brake pin every 4ms into a rolling bit-history
+      if (now - lastBrakeSampleTime >= 4) {
+        lastBrakeSampleTime = now;
+        bool rawReading = false;
+        if (brakePin == 0) {
+          // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
+          bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
+          bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
+          rawReading = p19 || p21;
+        } else if (brakePin > 0) {
+          rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
+        }
 
-      rawBrakePinState = rawReading;
-      brakeHistory = (brakeHistory << 1) | (rawReading ? 1 : 0);
+        rawBrakePinState = rawReading;
+        brakeHistory = (brakeHistory << 1) | (rawReading ? 1 : 0);
 
-      // Fast activation: 2 consecutive active samples (8ms)
-      if ((brakeHistory & 0x03) == 0x03) {
-        debouncedBrakeState = true;
-      }
-      // Instant guaranteed release: 3 consecutive released samples (12ms)
-      else if ((brakeHistory & 0x07) == 0x00) {
-        debouncedBrakeState = false;
+        // Fast activation: 2 consecutive active samples (8ms)
+        if ((brakeHistory & 0x03) == 0x03) {
+          debouncedBrakeState = true;
+        }
+        // Instant guaranteed release: 3 consecutive released samples (12ms)
+        else if ((brakeHistory & 0x07) == 0x00) {
+          debouncedBrakeState = false;
+        }
       }
     }
 
@@ -816,7 +1114,10 @@ void loop() {
     currentRawThrottle = rawSum >> 2;
   }
 
-  currentVoltageReading = (currentRawThrottle / 4095.0f) * 3.3f;
+  throttleVoltage = (currentRawThrottle / 4095.0f) * 3.3f;
+
+  // Update Garmin Proximity & Anti-Theft Lock State
+  updateGarminLockState();
 
   // 4. Push brake flag to Slave VESC immediately on change
   if (debouncedBrakeState != lastSentBrakeState) {
@@ -830,30 +1131,39 @@ void loop() {
 
   // 6. INSTANT ZERO-LATENCY Throttle Calculation
   float rawRatio = 0.0f;
-  if (currentRawThrottle > THROTTLE_MIN_RAW) {
+  if (!isScooterLocked && currentRawThrottle > THROTTLE_MIN_RAW) {
     rawRatio = (currentRawThrottle - THROTTLE_MIN_RAW) /
                (float)(THROTTLE_MAX_RAW - THROTTLE_MIN_RAW);
     rawRatio = constrain(rawRatio, 0.0f, 1.0f);
   } else {
-    rawRatio = 0.0f; // Instant cutoff when below deadband!
+    rawRatio = 0.0f; // Instant cutoff when below deadband or when LOCKED!
   }
 
   // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & pure freewheel
   if (now - lastMotorCmdTime >= 20) {
     lastMotorCmdTime = now;
 
-    if (debouncedBrakeState) {
+    if (isScooterLocked) {
+      // PROXIMITY ANTI-THEFT LOCK:
+      // Throttle completely disabled!
       targetAmps = 0.0f;
+      // Wheel Lock: If wheel moves or rolls, apply dual regenerative brake current to lock the wheels!
+      if (vehicleSpeedKmH > 0.1f || fabs(vescRpm57) > 30.0f) {
+        targetBrakeAmps = userBrakeAmps;
+        currentMotorState = STATE_BRAKE;
+        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
+      } else {
+        // Holding resistance
+        targetBrakeAmps = 5.0f;
+        currentMotorState = STATE_BRAKE;
+        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
+      }
+    } else if (debouncedBrakeState && brakeEnabled) {
+      // Full brake priority: Throttle is completely INACTIVE during braking
+      targetAmps = 0.0f;
+      targetBrakeAmps = userBrakeAmps;
       currentMotorState = STATE_BRAKE;
       idleFramesRemaining = 1; // Send 1 clean 0A current release frame on release
-
-      if (rawRatio <= 0.0f) {
-        targetBrakeAmps = userBrakeAmps;
-      } else {
-        // Variable braking modulated by throttle (10A to 35A)
-        targetBrakeAmps = MIN_VARIABLE_BRAKE +
-                          (rawRatio * (MAX_VARIABLE_BRAKE - MIN_VARIABLE_BRAKE));
-      }
       sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
     } else if (kickBlocked) {
       targetAmps = 0.0f;
@@ -892,11 +1202,14 @@ void loop() {
   // 8. BLE notify live line at 5 Hz
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[160];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s",
+    char buf[190];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s LOCK=%d GRSSI=%d GEN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL");
+             batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
+             targetAmps, kickBlocked ? "HELD" : "ROLL",
+             isScooterLocked ? 1 : 0,
+             (garminLockEnabled && (millis() - lastGarminSeenMs < 10000)) ? lastGarminRssi : -120,
+             garminLockEnabled ? 1 : 0);
     blePushLine(String(buf));
   }
 

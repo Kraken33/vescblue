@@ -323,7 +323,27 @@
       box-shadow: 0 0 12px rgba(244, 63, 94, 0.4);
     }
 
+    .badge.disabled-brake {
+      background: rgba(148, 163, 184, 0.12);
+      border-color: rgba(148, 163, 184, 0.25);
+      color: var(--text-dim);
+    }
+
     .badge.active-kick {
+      background: rgba(16, 185, 129, 0.15);
+      border-color: rgba(16, 185, 129, 0.4);
+      color: var(--accent-emerald);
+    }
+
+    .badge.active-locked {
+      background: rgba(244, 63, 94, 0.25);
+      border-color: rgba(244, 63, 94, 0.8);
+      color: var(--accent-rose);
+      box-shadow: 0 0 14px rgba(244, 63, 94, 0.5);
+      animation: pulse 1.5s infinite;
+    }
+
+    .badge.active-unlocked {
       background: rgba(16, 185, 129, 0.15);
       border-color: rgba(16, 185, 129, 0.4);
       color: var(--accent-emerald);
@@ -557,6 +577,184 @@
       transform: scale(0.97);
     }
 
+    .btn-secondary.active-brake-btn {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.12);
+      color: #34d399;
+    }
+
+    .btn-secondary.disabled-brake-btn {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.12);
+      color: var(--accent-rose);
+    }
+
+    /* Garmin Security Card & Banner */
+    .garmin-card {
+      gap: 10px;
+    }
+
+    .garmin-banner {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      transition: all 0.3s ease;
+    }
+
+    .garmin-banner.unlocked {
+      background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(5, 150, 105, 0.08));
+      border: 1px solid rgba(16, 185, 129, 0.4);
+      box-shadow: 0 0 12px rgba(16, 185, 129, 0.15);
+    }
+
+    .garmin-banner.locked {
+      background: linear-gradient(135deg, rgba(244, 63, 94, 0.22), rgba(225, 29, 72, 0.12));
+      border: 1px solid rgba(244, 63, 94, 0.5);
+      box-shadow: 0 0 14px rgba(244, 63, 94, 0.25);
+      animation: pulse 2s infinite;
+    }
+
+    .garmin-banner.disabled {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+    }
+
+    .garmin-banner-icon {
+      font-size: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .garmin-banner-info {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .garmin-banner-title {
+      font-family: var(--font-display);
+      font-size: 12px;
+      font-weight: 800;
+      letter-spacing: 0.5px;
+      color: var(--text-main);
+    }
+
+    .garmin-banner.unlocked .garmin-banner-title {
+      color: var(--accent-emerald);
+    }
+
+    .garmin-banner.locked .garmin-banner-title {
+      color: var(--accent-rose);
+    }
+
+    .garmin-banner-sub {
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    .garmin-signal-box {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.06);
+      border-radius: 12px;
+      padding: 8px 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .garmin-signal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .garmin-rssi-val {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--accent-cyan);
+    }
+
+    .garmin-meter-wrap {
+      width: 100%;
+      height: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border-radius: 3px;
+      overflow: hidden;
+    }
+
+    .garmin-meter-bar {
+      height: 100%;
+      width: 0%;
+      background: var(--accent-emerald);
+      border-radius: 3px;
+      transition: width 0.3s ease, background 0.3s ease;
+    }
+
+    .garmin-meter-bar.rssi-strong {
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
+    }
+
+    .garmin-meter-bar.rssi-medium {
+      background: var(--accent-amber);
+      box-shadow: 0 0 8px var(--accent-amber);
+    }
+
+    .garmin-meter-bar.rssi-weak {
+      background: var(--accent-rose);
+      box-shadow: 0 0 8px var(--accent-rose);
+    }
+
+    .garmin-device-info {
+      font-size: 9px;
+      font-family: var(--font-mono);
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    details.garmin-details {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--border-card);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+
+    details.garmin-details summary {
+      padding: 8px 10px;
+      font-size: 10px;
+      font-weight: 700;
+      color: var(--text-muted);
+      cursor: pointer;
+      list-style: none;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    details.garmin-details summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .garmin-settings-body {
+      padding: 6px 10px 10px;
+      border-top: 1px solid var(--border-card);
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .garmin-mac-input-wrap {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+
     /* Console Drawer */
     details.console-drawer {
       background: var(--bg-card);
@@ -648,6 +846,316 @@
     }
 
     /* =========================================================================
+       GPS TRIP COMPUTER & ODOMETER CARD
+       ========================================================================= */
+    .trip-card {
+      background: var(--bg-card);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-card);
+      border-radius: 20px;
+      padding: 14px 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      box-shadow: 0 10px 24px rgba(0, 0, 0, 0.35);
+      transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      position: relative;
+      overflow: hidden;
+    }
+
+    .trip-card.recording {
+      border-color: rgba(0, 242, 254, 0.4);
+      box-shadow: 0 0 24px rgba(0, 242, 254, 0.15), inset 0 0 15px rgba(0, 242, 254, 0.05);
+    }
+
+    .trip-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .trip-title-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .trip-icon {
+      font-size: 14px;
+    }
+
+    .trip-title {
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: var(--text-dim);
+    }
+
+    .gps-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      padding: 3px 8px;
+      border-radius: 12px;
+      font-size: 10px;
+      font-weight: 700;
+      border: 1px solid var(--border-card);
+      background: rgba(255, 255, 255, 0.04);
+      color: var(--text-muted);
+      transition: all 0.25s ease;
+    }
+
+    .gps-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--text-dim);
+    }
+
+    .gps-badge.gps-active {
+      border-color: rgba(16, 185, 129, 0.4);
+      background: rgba(16, 185, 129, 0.12);
+      color: var(--accent-emerald);
+    }
+    .gps-badge.gps-active .gps-dot {
+      background: var(--accent-emerald);
+      box-shadow: 0 0 8px var(--accent-emerald);
+      animation: pulse 1.5s infinite;
+    }
+
+    .gps-badge.gps-acquiring {
+      border-color: rgba(245, 158, 11, 0.4);
+      background: rgba(245, 158, 11, 0.12);
+      color: var(--accent-amber);
+    }
+    .gps-badge.gps-acquiring .gps-dot {
+      background: var(--accent-amber);
+      animation: pulse 1s infinite;
+    }
+
+    .gps-badge.gps-paused {
+      border-color: rgba(245, 158, 11, 0.3);
+      background: rgba(245, 158, 11, 0.08);
+      color: var(--accent-amber);
+    }
+    .gps-badge.gps-paused .gps-dot {
+      background: var(--accent-amber);
+    }
+
+    .gps-badge.gps-error {
+      border-color: rgba(244, 63, 94, 0.4);
+      background: rgba(244, 63, 94, 0.12);
+      color: var(--accent-rose);
+    }
+    .gps-badge.gps-error .gps-dot {
+      background: var(--accent-rose);
+    }
+
+    /* Trip Main Distance Display */
+    .trip-main-display {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.04);
+      border-radius: 14px;
+      padding: 8px 14px;
+    }
+
+    .trip-dist-val-wrap {
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+    }
+
+    .trip-dist-num {
+      font-family: var(--font-display);
+      font-size: 34px;
+      font-weight: 900;
+      line-height: 1;
+      letter-spacing: -0.5px;
+      background: linear-gradient(135deg, #ffffff 30%, var(--accent-cyan));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .trip-dist-unit {
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      color: var(--accent-cyan);
+    }
+
+    .trip-dist-sub {
+      font-size: 10px;
+      color: var(--text-dim);
+      font-family: var(--font-mono);
+      text-align: right;
+    }
+
+    /* Trip Stats Matrix */
+    .trip-stats-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .trip-stat-box {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+      border-radius: 12px;
+      padding: 6px 4px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 1px;
+    }
+
+    .trip-stat-label {
+      font-size: 8.5px;
+      font-weight: 700;
+      color: var(--text-dim);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+
+    .trip-stat-val {
+      font-family: var(--font-display);
+      font-size: 15px;
+      font-weight: 800;
+      color: #ffffff;
+    }
+
+    .trip-stat-sub {
+      font-size: 9px;
+      color: var(--text-muted);
+    }
+
+    /* Action buttons */
+    .trip-actions-wrap {
+      display: grid;
+      grid-template-columns: 1.5fr 1fr;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .btn-trip-main {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-family: var(--font-display);
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      border: none;
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+    }
+
+    .btn-trip-main:active {
+      transform: scale(0.96);
+    }
+
+    .btn-trip-start {
+      background: linear-gradient(135deg, #10b981, #059669);
+      color: #ffffff;
+      box-shadow: 0 4px 15px rgba(16, 185, 129, 0.35);
+    }
+
+    .btn-trip-stop {
+      background: linear-gradient(135deg, #f43f5e, #be123c);
+      color: #ffffff;
+      box-shadow: 0 4px 15px rgba(244, 63, 94, 0.4);
+      animation: pulse-border 2s infinite;
+    }
+
+    @keyframes pulse-border {
+      0%, 100% { box-shadow: 0 0 10px rgba(244, 63, 94, 0.4); }
+      50% { box-shadow: 0 0 20px rgba(244, 63, 94, 0.7); }
+    }
+
+    .trip-aux-buttons {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 6px;
+    }
+
+    .btn-trip-aux {
+      padding: 10px 6px;
+      border-radius: 12px;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      border: 1px solid var(--border-card);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-trip-aux:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+
+    .btn-trip-aux:not(:disabled):active {
+      background: rgba(255, 255, 255, 0.12);
+      transform: scale(0.96);
+    }
+
+    /* Footer Odometer & Info */
+    .trip-footer {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-top: 4px;
+      border-top: 1px solid rgba(255, 255, 255, 0.05);
+      font-size: 10px;
+    }
+
+    .trip-odo {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+    }
+
+    .trip-odo-label {
+      color: var(--text-dim);
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .trip-odo-val {
+      font-family: var(--font-mono);
+      color: var(--accent-cyan);
+      font-weight: 700;
+    }
+
+    .trip-wake-status {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--text-dim);
+      font-size: 10px;
+    }
+    .trip-wake-status.active {
+      color: var(--accent-emerald);
+    }
+
+    /* =========================================================================
        HORIZONTAL / LANDSCAPE COCKPIT OPTIMIZATION
        ========================================================================= */
     @media (orientation: landscape) and (min-width: 560px), (min-width: 820px) {
@@ -697,32 +1205,31 @@
 
       /* Center Speedometer Wing */
       .speedo-hero {
-        height: 100%;
-        padding: 14px 14px 12px;
-        justify-content: space-around;
+        padding: 10px 14px 10px;
         border-radius: 20px;
+        gap: 6px;
       }
 
       .speed-gauge-wrap {
-        width: 185px;
-        height: 100px;
+        width: 170px;
+        height: 88px;
       }
 
       .speed-gauge-svg {
-        width: 185px;
-        height: 185px;
+        width: 170px;
+        height: 170px;
       }
 
       .speed-num {
-        font-size: 52px;
+        font-size: 46px;
       }
 
       .speed-unit {
-        font-size: 11px;
+        font-size: 10px;
       }
 
       .hero-badges {
-        margin-top: 6px;
+        margin-top: 2px;
       }
 
       /* Left & Right Wings */
@@ -772,6 +1279,34 @@
 
       .console-log {
         height: 55px;
+      }
+
+      .trip-card {
+        padding: 10px 12px;
+        gap: 8px;
+        border-radius: 16px;
+      }
+
+      .trip-main-display {
+        padding: 6px 10px;
+      }
+
+      .trip-dist-num {
+        font-size: 26px;
+      }
+
+      .trip-stat-val {
+        font-size: 13px;
+      }
+
+      .btn-trip-main {
+        padding: 8px 10px;
+        font-size: 12px;
+      }
+
+      .btn-trip-aux {
+        padding: 8px 4px;
+        font-size: 10px;
       }
     }
   </style>
@@ -830,13 +1365,89 @@
           </div>
 
           <div class="btn-action-row">
+            <button id="btn-brake-toggle" class="btn-secondary active-brake-btn" onclick="toggleBrakeEnable()">
+              <span id="btn-brake-icon">🛑</span> <span id="btn-brake-text">Brake: ENABLED</span>
+            </button>
             <button class="btn-secondary" onclick="toggleKickStart()">
               <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
             </button>
-            <button class="btn-secondary" onclick="sendCmd('S')">
+            <button class="btn-secondary" style="grid-column: span 2;" onclick="sendCmd('S')">
               <span>📡</span> Status Query
             </button>
           </div>
+        </div>
+
+        <!-- Phone Proximity & Anti-Theft Security Card -->
+        <div class="section-title" style="margin-top: 10px;">
+          <span>Security & Key</span>
+          <span id="garmin-status-tag" style="color: var(--text-dim); font-size: 11px;">📱 Key Off</span>
+        </div>
+
+        <div class="controls-card garmin-card" id="garmin-card">
+          <!-- Live Status Banner -->
+          <div id="garmin-banner" class="garmin-banner disabled">
+            <div class="garmin-banner-icon" id="garmin-banner-icon">🛡️</div>
+            <div class="garmin-banner-info">
+              <div class="garmin-banner-title" id="garmin-banner-title">AUTO-LOCK DISABLED</div>
+              <div class="garmin-banner-sub" id="garmin-banner-sub">Enable to lock scooter when phone is away</div>
+            </div>
+          </div>
+
+          <!-- Live Signal & Proximity Radar -->
+          <div class="garmin-signal-box">
+            <div class="garmin-signal-header">
+              <span class="control-label">Phone Proximity</span>
+              <span id="disp-garmin-rssi" class="garmin-rssi-val">Disabled</span>
+            </div>
+            <div class="garmin-meter-wrap">
+              <div id="garmin-meter-bar" class="garmin-meter-bar" style="width: 0%;"></div>
+            </div>
+            <div class="garmin-device-info" id="garmin-device-info">Target: Kirill's iPhone / Apple / Auto</div>
+          </div>
+
+          <!-- Action Buttons -->
+          <div class="btn-action-row">
+            <button id="btn-garmin-toggle" class="btn-secondary" onclick="toggleGarminLock()">
+              <span id="btn-garmin-icon">🛡️</span> <span id="btn-garmin-text">Auto-Lock: OFF</span>
+            </button>
+            <button id="btn-garmin-learn" class="btn-secondary" onclick="pairIphone()">
+              <span>📱</span> <span>Pair iPhone</span>
+            </button>
+            <button id="btn-manual-unlock" class="btn-secondary" onclick="sendManualUnlock()">
+              <span>🔓</span> <span>Unlock</span>
+            </button>
+            <button id="btn-manual-lock" class="btn-secondary" onclick="sendManualLock()">
+              <span>🔒</span> <span>Force Lock</span>
+            </button>
+          </div>
+
+          <!-- Collapsible Settings -->
+          <details class="garmin-details">
+            <summary>
+              <span>⚙️ Distance & Sensitivity</span>
+              <span style="font-size: 9px;">▼</span>
+            </summary>
+            <div class="garmin-settings-body">
+              <div class="control-row" style="margin-top: 6px;">
+                <span class="control-label">Lock Distance (RSSI)</span>
+                <span id="rssi-thold-val" class="slider-val">-85 dBm</span>
+              </div>
+              <div class="slider-wrap">
+                <input type="range" id="rssi-slider" class="range-input" min="-100" max="-60" step="1" value="-85" oninput="updateRssiSlider(this.value)" onchange="sendRssiThreshold(this.value)" />
+              </div>
+              <div class="control-row" style="margin-top: 8px;">
+                <span class="control-label">Lockout Timeout</span>
+                <span id="timeout-val" class="slider-val">6 s</span>
+              </div>
+              <div class="slider-wrap">
+                <input type="range" id="timeout-slider" class="range-input" min="3" max="20" step="1" value="6" oninput="updateTimeoutSlider(this.value)" onchange="sendTimeout(this.value)" />
+              </div>
+              <div class="garmin-mac-input-wrap" style="margin-top: 8px;">
+                <input type="text" id="garmin-mac-input" class="console-input" placeholder="Phone Name (e.g. Kirill or iPhone)" />
+                <button class="btn-secondary" style="padding: 4px 8px;" onclick="sendCustomName()">Set</button>
+              </div>
+            </div>
+          </details>
         </div>
 
       </div>
@@ -867,6 +1478,9 @@
             <div id="badge-brake" class="badge">
               <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
             </div>
+            <div id="badge-lock" class="badge">
+              <span>🔓</span> <span id="lock-text">AUTO-LOCK OFF</span>
+            </div>
             <div id="badge-kick" class="badge active-kick">
               <span>⚡</span> <span id="kick-text">ZERO START</span>
             </div>
@@ -891,6 +1505,71 @@
             </div>
           </div>
         </div>
+
+        <!-- GPS Trip Computer Card -->
+        <div id="trip-card" class="trip-card">
+          <div class="trip-header">
+            <div class="trip-title-wrap">
+              <span class="trip-icon">📍</span>
+              <span class="trip-title">GPS Trip Computer</span>
+            </div>
+            <div id="gps-status-badge" class="gps-badge gps-idle">
+              <span class="gps-dot"></span>
+              <span id="gps-status-text">GPS Ready</span>
+            </div>
+          </div>
+
+          <div class="trip-main-display">
+            <div class="trip-dist-val-wrap">
+              <span id="trip-distance" class="trip-dist-num">0.00</span>
+              <span class="trip-dist-unit">KM</span>
+            </div>
+            <div class="trip-dist-sub" id="trip-distance-sub">0 m ridden</div>
+          </div>
+
+          <div class="trip-stats-grid">
+            <div class="trip-stat-box">
+              <span class="trip-stat-label">Duration</span>
+              <span id="trip-time" class="trip-stat-val">00:00:00</span>
+              <span class="trip-stat-sub">Ride Time</span>
+            </div>
+            <div class="trip-stat-box">
+              <span class="trip-stat-label">Avg Speed</span>
+              <span id="trip-avg-speed" class="trip-stat-val">0.0</span>
+              <span class="trip-stat-sub">km/h</span>
+            </div>
+            <div class="trip-stat-box">
+              <span class="trip-stat-label">Top Speed</span>
+              <span id="trip-max-speed" class="trip-stat-val">0.0</span>
+              <span class="trip-stat-sub">km/h</span>
+            </div>
+          </div>
+
+          <div class="trip-actions-wrap">
+            <button id="btn-trip-toggle" class="btn-trip-main btn-trip-start" onclick="toggleTripRecording()">
+              <span id="btn-trip-icon">▶</span> <span id="btn-trip-text">START TRIP</span>
+            </button>
+            <div class="trip-aux-buttons">
+              <button id="btn-trip-pause" class="btn-trip-aux" onclick="togglePauseTrip()" disabled title="Pause or resume trip">
+                <span id="btn-pause-icon">⏸</span> <span id="btn-pause-text">Pause</span>
+              </button>
+              <button id="btn-trip-reset" class="btn-trip-aux" onclick="resetTripData()" title="Reset current trip metrics">
+                <span>🔄</span> <span>Reset</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="trip-footer">
+            <div class="trip-odo" onclick="promptResetOdometer()" title="Click to manage total odometer" style="cursor: pointer;">
+              <span class="trip-odo-label">ODO:</span>
+              <span id="disp-odo" class="trip-odo-val">0.00 km</span>
+            </div>
+            <div class="trip-wake-status" id="trip-wake-status" title="Screen Wake Lock">
+              <span>📱</span> <span id="wake-status-text">Wake Lock: Off</span>
+            </div>
+          </div>
+        </div>
+
       </div>
 
       <!-- RIGHT WING: Speed Profiles & Console -->
@@ -980,12 +1659,35 @@
     let isConnected = false;
     let currentActiveGear = 1;
     let isZeroStart = true;
+    let isBrakeEnabled = true;
+    let isScooterLocked = false;
+    let isGarminEnabled = false;
+    let currentGarminRssi = -120;
+    let garminTargetMac = "";
 
-    // Check Web Bluetooth support
+    // =========================================================================
+    // GPS Trip Tracker & Odometer State
+    // =========================================================================
+    let tripWatchId = null;
+    let isTripRunning = false;
+    let isTripPaused = false;
+    let tripStartTime = 0;
+    let tripElapsedMs = 0;
+    let tripTimerInterval = null;
+
+    let lastGpsCoords = null; // { lat, lon, timestamp, accuracy }
+    let tripDistanceMeters = 0;
+    let tripMaxSpeedKmh = 0;
+    let totalOdometerKm = parseFloat(localStorage.getItem('vesc_total_odometer') || '0.0');
+
+    let wakeLockSentinel = null;
+
+    // Check Web Bluetooth support & Initialize Trip Computer
     window.addEventListener('DOMContentLoaded', () => {
       if (!navigator.bluetooth) {
         document.getElementById('ble-warning').style.display = 'block';
       }
+      initTripComputer();
     });
 
     // =========================================================================
@@ -1075,20 +1777,29 @@
     }
 
     function parseTelemetry(str) {
-      // Stream format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
+      // Stream format: SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s LOCK=%d GRSSI=%d GEN=%d
       const spdMatch = str.match(/SPD=([\d.]+)/);
       const gearMatch = str.match(/G=(\d+)/);
       const sMatch = str.match(/S=(\d+)/);
       const vMatch = str.match(/V=([\d.]+)/);
       const rawMatch = str.match(/RAW=(\d+)/);
       const brkMatch = str.match(/BRK=(\d+)/);
+      const benMatch = str.match(/BEN=(\d+)/);
       const ampMatch = str.match(/AMP=([\d.]+)/);
       const bcMatch = str.match(/BC=([\d.]+)A/);
       const kickMatch = str.match(/KICK=(\w+)/);
+      const lockMatch = str.match(/LOCK=(\d+)/);
+      const grssiMatch = str.match(/GRSSI=(-?\d+)/);
+      const genMatch = str.match(/GEN=(\d+)/);
+      const gmacMatch = str.match(/GMAC=([^\s]+)/);
 
       if (spdMatch) {
         const speed = parseFloat(spdMatch[1]);
         updateSpeedGauge(speed);
+        if (isTripRunning && !isTripPaused && speed > tripMaxSpeedKmh) {
+          tripMaxSpeedKmh = speed;
+          document.getElementById('trip-max-speed').textContent = tripMaxSpeedKmh.toFixed(1);
+        }
       }
 
       if (vMatch) {
@@ -1103,15 +1814,48 @@
         document.getElementById('disp-throttle').textContent = rawMatch[1];
       }
 
+      if (benMatch) {
+        isBrakeEnabled = (benMatch[1] === "1");
+        updateBrakeSensorUI(isBrakeEnabled);
+      }
+
+      if (genMatch) {
+        isGarminEnabled = (genMatch[1] === "1");
+        updateGarminLockUI();
+      }
+
+      if (lockMatch) {
+        isScooterLocked = (lockMatch[1] === "1");
+        updateLockBadgeUI(isScooterLocked);
+      }
+
+      if (grssiMatch) {
+        currentGarminRssi = parseInt(grssiMatch[1], 10);
+        updateGarminSignalUI(currentGarminRssi);
+      }
+
+      if (gmacMatch && gmacMatch[1] !== "AUTO" && gmacMatch[1] !== "") {
+        garminTargetMac = gmacMatch[1];
+        document.getElementById('garmin-device-info').textContent = `Target: ${garminTargetMac}`;
+        document.getElementById('garmin-mac-input').placeholder = garminTargetMac;
+      }
+
+      if (str.includes("GARMIN:LEARNED")) {
+        showToast("✅ Garmin Watch Paired & Saved!");
+      }
+
       if (brkMatch) {
         const isBraking = brkMatch[1] === "1";
         const badge = document.getElementById('badge-brake');
         const text = document.getElementById('brake-text');
-        if (isBraking) {
-          badge.classList.add('active-brake');
+        if (!isBrakeEnabled) {
+          badge.className = 'badge disabled-brake';
+          text.textContent = "BRAKE DISABLED";
+        } else if (isBraking) {
+          badge.className = 'badge active-brake';
           text.textContent = "BRAKING";
         } else {
-          badge.classList.remove('active-brake');
+          badge.className = 'badge';
           text.textContent = "BRAKE OFF";
         }
       }
@@ -1167,6 +1911,188 @@
       document.getElementById('brake-amp-val').textContent = parseFloat(val).toFixed(1) + " A";
     }
 
+    function updateBrakeSensorUI(enabled) {
+      const btn = document.getElementById('btn-brake-toggle');
+      const text = document.getElementById('btn-brake-text');
+      const icon = document.getElementById('btn-brake-icon');
+      if (enabled) {
+        btn.classList.add('active-brake-btn');
+        btn.classList.remove('disabled-brake-btn');
+        icon.textContent = "🛑";
+        text.textContent = "Brake: ENABLED";
+      } else {
+        btn.classList.remove('active-brake-btn');
+        btn.classList.add('disabled-brake-btn');
+        icon.textContent = "⚠️";
+        text.textContent = "Brake: DISABLED";
+        const badge = document.getElementById('badge-brake');
+        const badgeText = document.getElementById('brake-text');
+        badge.className = 'badge disabled-brake';
+        badgeText.textContent = "BRAKE DISABLED";
+      }
+    }
+
+    // =========================================================================
+    // Garmin Security & Proximity UI
+    // =========================================================================
+    function updateLockBadgeUI(locked) {
+      const badge = document.getElementById('badge-lock');
+      const banner = document.getElementById('garmin-banner');
+      const bannerIcon = document.getElementById('garmin-banner-icon');
+      const bannerTitle = document.getElementById('garmin-banner-title');
+      const bannerSub = document.getElementById('garmin-banner-sub');
+
+      if (!isGarminEnabled) {
+        if (badge) {
+          badge.className = 'badge';
+          badge.innerHTML = '<span>🔓</span> <span id="lock-text">AUTO-LOCK OFF</span>';
+        }
+        if (banner) {
+          banner.className = 'garmin-banner disabled';
+          bannerIcon.textContent = '🛡️';
+          bannerTitle.textContent = 'AUTO-LOCK DISABLED';
+          bannerSub.textContent = 'Enable to lock scooter when watch is away';
+        }
+        return;
+      }
+
+      if (locked) {
+        if (badge) {
+          badge.className = 'badge active-locked';
+          badge.innerHTML = '<span>🔒</span> <span id="lock-text">SCOOTER LOCKED</span>';
+        }
+        if (banner) {
+          banner.className = 'garmin-banner locked';
+          bannerIcon.textContent = '🔒';
+          bannerTitle.textContent = 'SCOOTER LOCKED (SAFE)';
+          bannerSub.textContent = 'Garmin out of range • Throttle & Wheels Locked';
+        }
+      } else {
+        if (badge) {
+          badge.className = 'badge active-unlocked';
+          badge.innerHTML = '<span>🔓</span> <span id="lock-text">UNLOCKED</span>';
+        }
+        if (banner) {
+          banner.className = 'garmin-banner unlocked';
+          bannerIcon.textContent = '🔓';
+          bannerTitle.textContent = 'SCOOTER UNLOCKED';
+          bannerSub.textContent = 'Garmin Watch in proximity • Ready to ride';
+        }
+      }
+    }
+
+    function updateGarminSignalUI(rssi) {
+      const rssiElem = document.getElementById('disp-garmin-rssi');
+      const bar = document.getElementById('garmin-meter-bar');
+      if (!isGarminEnabled) {
+        if (rssiElem) rssiElem.textContent = "Disabled";
+        if (bar) bar.style.width = "0%";
+        return;
+      }
+      if (rssi <= -110) {
+        if (rssiElem) rssiElem.textContent = "Out of Range";
+        if (bar) {
+          bar.style.width = "0%";
+          bar.className = "garmin-meter-bar";
+        }
+        return;
+      }
+
+      if (rssiElem) rssiElem.textContent = `${rssi} dBm`;
+      const pct = Math.min(Math.max(((rssi + 100) / 50) * 100, 5), 100);
+      if (bar) {
+        bar.style.width = `${pct}%`;
+        if (rssi >= -75) {
+          bar.className = "garmin-meter-bar rssi-strong";
+        } else if (rssi >= -85) {
+          bar.className = "garmin-meter-bar rssi-medium";
+        } else {
+          bar.className = "garmin-meter-bar rssi-weak";
+        }
+      }
+    }
+
+    function updateGarminLockUI() {
+      const btn = document.getElementById('btn-garmin-toggle');
+      const text = document.getElementById('btn-garmin-text');
+      const statusTag = document.getElementById('garmin-status-tag');
+      if (isGarminEnabled) {
+        if (btn) btn.classList.add('active-brake-btn');
+        if (text) text.textContent = "Auto-Lock: ON";
+        if (statusTag) {
+          statusTag.textContent = "📱 Key Armed";
+          statusTag.style.color = "var(--accent-emerald)";
+        }
+      } else {
+        if (btn) btn.classList.remove('active-brake-btn');
+        if (text) text.textContent = "Auto-Lock: OFF";
+        if (statusTag) {
+          statusTag.textContent = "📱 Key Off";
+          statusTag.style.color = "var(--text-dim)";
+        }
+      }
+      updateLockBadgeUI(isScooterLocked);
+      updateGarminSignalUI(currentGarminRssi);
+    }
+
+    function toggleGarminLock() {
+      isGarminEnabled = !isGarminEnabled;
+      updateGarminLockUI();
+      sendCmd(isGarminEnabled ? 'GEN 1' : 'GEN 0');
+    }
+
+    function pairIphone() {
+      sendCmd('GNAME Kirill');
+      document.getElementById('garmin-device-info').textContent = "Target: Kirill's iPhone";
+      showToast("📱 Paired: Kirill's iPhone set as Proximity Key!");
+    }
+
+    function startGarminLearn() {
+      sendCmd('GLEARN');
+      showToast("🔍 Pairing mode: Bring phone/key close to scooter!");
+    }
+
+    function sendManualUnlock() {
+      sendCmd('UNLOCK');
+      showToast("🔓 Scooter unlocked manually");
+    }
+
+    function sendManualLock() {
+      sendCmd('LOCK');
+      showToast("🔒 Scooter locked manually");
+    }
+
+    function updateRssiSlider(val) {
+      document.getElementById('rssi-thold-val').textContent = `${val} dBm`;
+    }
+
+    function sendRssiThreshold(val) {
+      sendCmd(`GRSSI ${val}`);
+    }
+
+    function updateTimeoutSlider(val) {
+      document.getElementById('timeout-val').textContent = `${val} s`;
+    }
+
+    function sendTimeout(val) {
+      sendCmd(`GTO ${val}`);
+    }
+
+    function sendCustomName() {
+      const input = document.getElementById('garmin-mac-input');
+      const val = input.value.trim();
+      if (val) {
+        if (val.includes(":") || val.length > 12) {
+          sendCmd(`GMAC ${val}`);
+        } else {
+          sendCmd(`GNAME ${val}`);
+        }
+        document.getElementById('garmin-device-info').textContent = `Target: ${val}`;
+        input.value = '';
+        showToast(`Set Target Key: ${val}`);
+      }
+    }
+
     // =========================================================================
     // Outgoing BLE Commands
     // =========================================================================
@@ -1196,6 +2122,16 @@
 
     function sendBrakeAmps(val) {
       sendCmd(`BC ${val}`);
+    }
+
+    function toggleBrakeEnable() {
+      isBrakeEnabled = !isBrakeEnabled;
+      updateBrakeSensorUI(isBrakeEnabled);
+      if (isBrakeEnabled) {
+        sendCmd('BEN 1');
+      } else {
+        sendCmd('BEN 0');
+      }
     }
 
     function toggleKickStart() {
@@ -1231,6 +2167,345 @@
       t.classList.add('show');
       setTimeout(() => t.classList.remove('show'), 2200);
     }
+
+    // =========================================================================
+    // GPS Trip Computer & Distance Tracker
+    // =========================================================================
+    function initTripComputer() {
+      if (isNaN(totalOdometerKm)) totalOdometerKm = 0.0;
+      document.getElementById('disp-odo').textContent = totalOdometerKm.toFixed(2) + " km";
+      updateTripUI();
+    }
+
+    async function toggleTripRecording() {
+      if (isTripRunning) {
+        stopTripRecording();
+      } else {
+        await startTripRecording();
+      }
+    }
+
+    async function startTripRecording() {
+      if (!navigator.geolocation) {
+        showToast("Geolocation is not supported by your browser");
+        setGpsStatus('error', 'No GPS Support');
+        return;
+      }
+
+      // If starting fresh
+      if (!isTripPaused) {
+        tripDistanceMeters = 0;
+        tripElapsedMs = 0;
+        tripMaxSpeedKmh = 0;
+        lastGpsCoords = null;
+      }
+
+      tripStartTime = Date.now() - tripElapsedMs;
+      isTripRunning = true;
+      isTripPaused = false;
+
+      // Update UI elements
+      const card = document.getElementById('trip-card');
+      card.classList.add('recording');
+      card.classList.remove('paused');
+      
+      const btnMain = document.getElementById('btn-trip-toggle');
+      btnMain.className = 'btn-trip-main btn-trip-stop';
+      document.getElementById('btn-trip-icon').textContent = '⏹';
+      document.getElementById('btn-trip-text').textContent = 'STOP TRIP';
+
+      const btnPause = document.getElementById('btn-trip-pause');
+      btnPause.disabled = false;
+      document.getElementById('btn-pause-icon').textContent = '⏸';
+      document.getElementById('btn-pause-text').textContent = 'Pause';
+
+      setGpsStatus('acquiring', 'Acquiring GPS...');
+      showToast("Trip recording started");
+      if (navigator.vibrate) navigator.vibrate([40, 50, 40]);
+
+      // Request screen wake lock
+      await requestWakeLock();
+
+      // Start duration timer
+      clearInterval(tripTimerInterval);
+      tripTimerInterval = setInterval(updateTripTimerAndStats, 500);
+
+      // Start Geolocation watch
+      try {
+        const geoOptions = {
+          enableHighAccuracy: true,
+          maximumAge: 1000,
+          timeout: 10000
+        };
+        tripWatchId = navigator.geolocation.watchPosition(
+          handleGpsPosition,
+          handleGpsError,
+          geoOptions
+        );
+      } catch (e) {
+        console.error("GPS Watch error:", e);
+        setGpsStatus('error', 'GPS Error');
+        showToast("Could not start GPS: " + e.message);
+      }
+    }
+
+    function togglePauseTrip() {
+      if (!isTripRunning) return;
+
+      const card = document.getElementById('trip-card');
+      const pauseIcon = document.getElementById('btn-pause-icon');
+      const pauseText = document.getElementById('btn-pause-text');
+
+      if (!isTripPaused) {
+        // PAUSE
+        isTripPaused = true;
+        tripElapsedMs = Date.now() - tripStartTime;
+        card.classList.remove('recording');
+        card.classList.add('paused');
+        pauseIcon.textContent = '▶';
+        pauseText.textContent = 'Resume';
+        setGpsStatus('paused', 'Paused');
+        lastGpsCoords = null; // Clear to prevent jumping across paused distance
+        showToast("Trip paused");
+        if (navigator.vibrate) navigator.vibrate(30);
+      } else {
+        // RESUME
+        isTripPaused = false;
+        tripStartTime = Date.now() - tripElapsedMs;
+        card.classList.add('recording');
+        card.classList.remove('paused');
+        pauseIcon.textContent = '⏸';
+        pauseText.textContent = 'Pause';
+        setGpsStatus('active', 'GPS Active');
+        showToast("Trip resumed");
+        if (navigator.vibrate) navigator.vibrate([30, 30]);
+      }
+    }
+
+    function stopTripRecording() {
+      if (!isTripRunning) return;
+
+      if (!isTripPaused) {
+        tripElapsedMs = Date.now() - tripStartTime;
+      }
+
+      isTripRunning = false;
+      isTripPaused = false;
+
+      // Clear watch and timer
+      if (tripWatchId !== null) {
+        navigator.geolocation.clearWatch(tripWatchId);
+        tripWatchId = null;
+      }
+      clearInterval(tripTimerInterval);
+      lastGpsCoords = null;
+
+      // Release Wake Lock
+      releaseWakeLock();
+
+      // Update UI
+      const card = document.getElementById('trip-card');
+      card.classList.remove('recording', 'paused');
+
+      const btnMain = document.getElementById('btn-trip-toggle');
+      btnMain.className = 'btn-trip-main btn-trip-start';
+      document.getElementById('btn-trip-icon').textContent = '▶';
+      document.getElementById('btn-trip-text').textContent = 'START TRIP';
+
+      const btnPause = document.getElementById('btn-trip-pause');
+      btnPause.disabled = true;
+      document.getElementById('btn-pause-icon').textContent = '⏸';
+      document.getElementById('btn-pause-text').textContent = 'Pause';
+
+      setGpsStatus('idle', 'Trip Stopped');
+      updateTripTimerAndStats();
+      saveOdometer();
+
+      const distKm = (tripDistanceMeters / 1000).toFixed(2);
+      const timeStr = formatDuration(tripElapsedMs);
+      showToast(`Trip Complete: ${distKm} km in ${timeStr}`);
+      if (navigator.vibrate) navigator.vibrate([60, 40, 60]);
+    }
+
+    function resetTripData() {
+      if (isTripRunning) {
+        stopTripRecording();
+      }
+      tripDistanceMeters = 0;
+      tripElapsedMs = 0;
+      tripMaxSpeedKmh = 0;
+      lastGpsCoords = null;
+      updateTripUI();
+      document.getElementById('trip-time').textContent = '00:00:00';
+      document.getElementById('trip-avg-speed').textContent = '0.0';
+      document.getElementById('trip-max-speed').textContent = '0.0';
+      setGpsStatus('idle', 'GPS Ready');
+      showToast("Trip metrics reset");
+    }
+
+    function promptResetOdometer() {
+      const confirmReset = confirm(`Total Scooter Odometer: ${totalOdometerKm.toFixed(2)} km.\n\nDo you want to reset the cumulative odometer to 0.00 km?`);
+      if (confirmReset) {
+        totalOdometerKm = 0.0;
+        saveOdometer();
+        document.getElementById('disp-odo').textContent = "0.00 km";
+        showToast("Odometer reset to 0.00 km");
+      }
+    }
+
+    function saveOdometer() {
+      localStorage.setItem('vesc_total_odometer', totalOdometerKm.toFixed(3));
+    }
+
+    function handleGpsPosition(pos) {
+      if (!isTripRunning || isTripPaused) return;
+
+      const { latitude, longitude, accuracy, speed } = pos.coords;
+      const now = pos.timestamp || Date.now();
+
+      // Discard poor accuracy fixes (> 35m)
+      if (accuracy > 35) {
+        setGpsStatus('acquiring', `Weak GPS (±${Math.round(accuracy)}m)`);
+        return;
+      }
+
+      setGpsStatus('active', `Fix ±${Math.round(accuracy)}m`);
+
+      if (!lastGpsCoords) {
+        lastGpsCoords = { lat: latitude, lon: longitude, timestamp: now, accuracy: accuracy };
+        return;
+      }
+
+      const dMeters = haversineDistance(lastGpsCoords.lat, lastGpsCoords.lon, latitude, longitude);
+      const dtSec = Math.max((now - lastGpsCoords.timestamp) / 1000, 0.1);
+
+      // Speed sanity check (ignore impossible jumps > 35 m/s = 126 km/h)
+      if (dMeters / dtSec > 35) {
+        lastGpsCoords = { lat: latitude, lon: longitude, timestamp: now, accuracy: accuracy };
+        return;
+      }
+
+      // Stationary drift suppression
+      const minThreshold = Math.max(2.5, accuracy * 0.35);
+      const isDeviceStationary = (speed !== null && speed < 0.5);
+
+      if (dMeters >= minThreshold && !isDeviceStationary) {
+        tripDistanceMeters += dMeters;
+        totalOdometerKm += (dMeters / 1000);
+        saveOdometer();
+        lastGpsCoords = { lat: latitude, lon: longitude, timestamp: now, accuracy: accuracy };
+      }
+
+      // Update GPS speed and Top Speed
+      if (speed !== null && speed >= 0) {
+        const speedKmh = speed * 3.6;
+        if (speedKmh > tripMaxSpeedKmh) {
+          tripMaxSpeedKmh = speedKmh;
+        }
+      }
+
+      updateTripUI();
+    }
+
+    function handleGpsError(err) {
+      console.warn("GPS Geolocation Error:", err);
+      if (err.code === 1) { // PERMISSION_DENIED
+        setGpsStatus('error', 'Permission Denied');
+        showToast("GPS Permission Denied. Please enable location.");
+      } else if (err.code === 2) { // POSITION_UNAVAILABLE
+        setGpsStatus('error', 'No Signal');
+      } else if (err.code === 3) { // TIMEOUT
+        setGpsStatus('acquiring', 'GPS Timeout');
+      }
+    }
+
+    function haversineDistance(lat1, lon1, lat2, lon2) {
+      const R = 6371000; // Earth radius in meters
+      const toRad = Math.PI / 180;
+      const dLat = (lat2 - lat1) * toRad;
+      const dLon = (lon2 - lon1) * toRad;
+      const a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+                Math.cos(lat1 * toRad) * Math.cos(lat2 * toRad) *
+                Math.sin(dLon / 2) * Math.sin(dLon / 2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      return R * c;
+    }
+
+    function updateTripTimerAndStats() {
+      if (isTripRunning && !isTripPaused) {
+        tripElapsedMs = Date.now() - tripStartTime;
+      }
+
+      document.getElementById('trip-time').textContent = formatDuration(tripElapsedMs);
+
+      // Average Speed
+      const elapsedHours = tripElapsedMs / 3600000;
+      const distKm = tripDistanceMeters / 1000;
+      const avgSpeed = (elapsedHours > 0.0005 && distKm > 0) ? (distKm / elapsedHours) : 0.0;
+      document.getElementById('trip-avg-speed').textContent = avgSpeed.toFixed(1);
+    }
+
+    function updateTripUI() {
+      const distKm = tripDistanceMeters / 1000;
+      document.getElementById('trip-distance').textContent = distKm.toFixed(2);
+      
+      if (distKm < 1.0) {
+        document.getElementById('trip-distance-sub').textContent = `${Math.round(tripDistanceMeters)} m ridden`;
+      } else {
+        document.getElementById('trip-distance-sub').textContent = `${distKm.toFixed(3)} km ridden`;
+      }
+
+      document.getElementById('trip-max-speed').textContent = tripMaxSpeedKmh.toFixed(1);
+      document.getElementById('disp-odo').textContent = totalOdometerKm.toFixed(2) + " km";
+    }
+
+    function formatDuration(ms) {
+      const totalSec = Math.floor(ms / 1000);
+      const hrs = Math.floor(totalSec / 3600);
+      const mins = Math.floor((totalSec % 3600) / 60);
+      const secs = totalSec % 60;
+      return `${String(hrs).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+    }
+
+    function setGpsStatus(statusType, label) {
+      const badge = document.getElementById('gps-status-badge');
+      const text = document.getElementById('gps-status-text');
+      badge.className = `gps-badge gps-${statusType}`;
+      text.textContent = label;
+    }
+
+    async function requestWakeLock() {
+      if ('wakeLock' in navigator) {
+        try {
+          wakeLockSentinel = await navigator.wakeLock.request('screen');
+          document.getElementById('trip-wake-status').classList.add('active');
+          document.getElementById('wake-status-text').textContent = "Screen Awake: ON";
+          wakeLockSentinel.addEventListener('release', () => {
+            if (!isTripRunning || isTripPaused) {
+              document.getElementById('trip-wake-status').classList.remove('active');
+              document.getElementById('wake-status-text').textContent = "Wake Lock: Off";
+            }
+          });
+        } catch (err) {
+          console.warn("Wake Lock error:", err);
+        }
+      }
+    }
+
+    function releaseWakeLock() {
+      if (wakeLockSentinel !== null) {
+        wakeLockSentinel.release().catch(() => {});
+        wakeLockSentinel = null;
+      }
+      document.getElementById('trip-wake-status').classList.remove('active');
+      document.getElementById('wake-status-text').textContent = "Wake Lock: Off";
+    }
+
+    document.addEventListener('visibilitychange', async () => {
+      if (document.visibilityState === 'visible' && isTripRunning && !isTripPaused) {
+        await requestWakeLock();
+      }
+    });
   </script>
 </body>
 </html>
