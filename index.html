@@ -185,6 +185,19 @@
       box-shadow: 0 0 8px var(--accent-emerald);
     }
 
+    /* Cockpit Layout (portrait by default, side-by-side in landscape) */
+    .cockpit-body {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
+    .cockpit-col {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+
     /* Speedometer Hero Display */
     .speedo-hero {
       position: relative;
@@ -640,6 +653,180 @@
     .toast.show {
       transform: translateX(-50%) translateY(0);
     }
+
+    /* =========================================================================
+       Horizontal Cockpit Optimization (Landscape orientation)
+       ========================================================================= */
+    @media (orientation: landscape) {
+      body {
+        padding: env(safe-area-inset-top, 6px) max(env(safe-area-inset-right, 12px), 16px) env(safe-area-inset-bottom, 8px) max(env(safe-area-inset-left, 12px), 16px);
+      }
+
+      .container {
+        max-width: 960px;
+        gap: 8px;
+      }
+
+      header {
+        padding: 6px 14px;
+        border-radius: 14px;
+      }
+
+      .brand-icon {
+        width: 28px;
+        height: 28px;
+      }
+
+      .brand-text h1 {
+        font-size: 14px;
+      }
+
+      .btn-connect {
+        min-height: 36px;
+        padding: 0 12px;
+        font-size: 12px;
+      }
+
+      /* 2-Column Split: Driving cluster on Left, Controls on Right */
+      .cockpit-body {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+        gap: 10px;
+        align-items: start;
+      }
+
+      .cockpit-col {
+        gap: 8px;
+      }
+
+      .section-title {
+        font-size: 11px;
+        margin-left: 2px;
+      }
+
+      /* Left Side: Speedometer cluster calibrated for ~380px screen height */
+      .speedo-hero {
+        padding: 12px 14px 10px;
+        border-radius: 20px;
+      }
+
+      .speed-gauge-wrap {
+        width: 175px;
+        height: 100px;
+      }
+
+      .speed-gauge-svg {
+        width: 175px;
+        height: 175px;
+      }
+
+      .speed-num {
+        font-size: 52px;
+      }
+
+      .speed-unit {
+        font-size: 11px;
+        margin-top: 2px;
+      }
+
+      .hero-badges {
+        margin-top: 6px;
+        gap: 6px;
+      }
+
+      .badge {
+        padding: 4px 10px;
+        font-size: 11px;
+      }
+
+      /* Telemetry Grid in landscape */
+      .telem-grid {
+        gap: 6px;
+      }
+
+      .telem-box {
+        padding: 6px 4px;
+        border-radius: 12px;
+      }
+
+      .telem-label {
+        font-size: 9px;
+      }
+
+      .telem-val {
+        font-size: 17px;
+      }
+
+      .telem-unit {
+        font-size: 10px;
+      }
+
+      /* Right Side: Profiles 2x2 grid */
+      .profiles-grid {
+        gap: 6px;
+      }
+
+      .profile-card {
+        min-height: 52px;
+        padding: 8px 10px;
+        border-radius: 14px;
+        gap: 2px;
+      }
+
+      .profile-card .p-gear {
+        font-size: 11px;
+      }
+
+      .profile-card .p-limit {
+        font-size: 16px;
+      }
+
+      .profile-card .p-name {
+        font-size: 12px;
+      }
+
+      .profile-card .p-amps {
+        font-size: 10px;
+      }
+
+      /* Controls & E-Brake in landscape */
+      .controls-card {
+        padding: 10px 12px;
+        border-radius: 16px;
+        gap: 8px;
+      }
+
+      .control-label {
+        font-size: 12px;
+      }
+
+      .control-sub {
+        font-size: 10px;
+      }
+
+      .btn-secondary {
+        min-height: 36px;
+        padding: 6px 8px;
+        font-size: 11px;
+      }
+
+      /* Compact Console Drawer */
+      details.console-drawer summary {
+        min-height: 34px;
+        padding: 6px 12px;
+        font-size: 11px;
+      }
+
+      .console-log {
+        height: 60px;
+        font-size: 10px;
+      }
+
+      .console-input {
+        height: 32px;
+        font-size: 11px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -672,150 +859,161 @@
       iOS Safari does not support Bluetooth directly. Please open this page in the free <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy Web BLE Browser</a> from the App Store.
     </div>
 
-    <!-- Speedometer Hero -->
-    <div class="speedo-hero">
-      <div class="speed-gauge-wrap">
-        <svg class="speed-gauge-svg" viewBox="0 0 100 100">
-          <defs>
-            <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-              <stop offset="0%" stop-color="#00f2fe" />
-              <stop offset="60%" stop-color="#4facfe" />
-              <stop offset="100%" stop-color="#9d4edd" />
-            </linearGradient>
-          </defs>
-          <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
-          <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
-        </svg>
-        
-        <div class="speed-value-box">
-          <div id="disp-speed" class="speed-num">0.0</div>
-          <div class="speed-unit">KM / H</div>
+    <!-- Cockpit Main Body: 2 Columns in Landscape -->
+    <div class="cockpit-body">
+      
+      <!-- Left Column: Driving Instrument Cluster -->
+      <div class="cockpit-col cockpit-col-left">
+        <!-- Speedometer Hero -->
+        <div class="speedo-hero">
+          <div class="speed-gauge-wrap">
+            <svg class="speed-gauge-svg" viewBox="0 0 100 100">
+              <defs>
+                <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                  <stop offset="0%" stop-color="#00f2fe" />
+                  <stop offset="60%" stop-color="#4facfe" />
+                  <stop offset="100%" stop-color="#9d4edd" />
+                </linearGradient>
+              </defs>
+              <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
+              <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
+            </svg>
+            
+            <div class="speed-value-box">
+              <div id="disp-speed" class="speed-num">0.0</div>
+              <div class="speed-unit">KM / H</div>
+            </div>
+          </div>
+
+          <div class="hero-badges">
+            <div id="badge-brake" class="badge">
+              <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
+            </div>
+            <div id="badge-kick" class="badge active-kick">
+              <span>⚡</span> <span id="kick-text">ZERO START</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Live Telemetry -->
+        <div class="section-title">
+          <span>Telemetry</span>
+        </div>
+
+        <div class="telem-grid">
+          <div class="telem-box">
+            <span class="telem-label">Battery</span>
+            <span id="disp-voltage" class="telem-val">--</span>
+            <span class="telem-unit">Volts</span>
+          </div>
+          <div class="telem-box">
+            <span class="telem-label">Target</span>
+            <span id="disp-current" class="telem-val">0.0</span>
+            <span class="telem-unit">Amps</span>
+          </div>
+          <div class="telem-box">
+            <span class="telem-label">Throttle</span>
+            <span id="disp-throttle" class="telem-val">--</span>
+            <span class="telem-unit">ADC Raw</span>
+          </div>
         </div>
       </div>
 
-      <div class="hero-badges">
-        <div id="badge-brake" class="badge">
-          <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
+      <!-- Right Column: Profiles & Controls -->
+      <div class="cockpit-col cockpit-col-right">
+        <!-- Speed Profile Selector -->
+        <div class="section-title">
+          <span>Speed Profiles</span>
+          <span id="active-profile-label" style="color: var(--accent-cyan);">P1: Eco</span>
         </div>
-        <div id="badge-kick" class="badge active-kick">
-          <span>⚡</span> <span id="kick-text">ZERO START</span>
+
+        <div class="profiles-grid">
+          <!-- Profile 1: Eco -->
+          <div class="profile-card active" data-gear="1" onclick="selectProfile(1)">
+            <div class="p-header">
+              <span class="p-gear">Gear 1</span>
+              <span class="p-limit">10 <small style="font-size:11px">km/h</small></span>
+            </div>
+            <div class="p-name">Eco Mode</div>
+            <div class="p-amps">Max 25A • Smooth</div>
+          </div>
+
+          <!-- Profile 2: City -->
+          <div class="profile-card" data-gear="2" onclick="selectProfile(2)">
+            <div class="p-header">
+              <span class="p-gear">Gear 2</span>
+              <span class="p-limit">15 <small style="font-size:11px">km/h</small></span>
+            </div>
+            <div class="p-name">City Cruising</div>
+            <div class="p-amps">Max 40A • Agile</div>
+          </div>
+
+          <!-- Profile 3: Drive -->
+          <div class="profile-card" data-gear="3" onclick="selectProfile(3)">
+            <div class="p-header">
+              <span class="p-gear">Gear 3</span>
+              <span class="p-limit">25 <small style="font-size:11px">km/h</small></span>
+            </div>
+            <div class="p-name">Drive (Legal)</div>
+            <div class="p-amps">Max 65A • Dynamic</div>
+          </div>
+
+          <!-- Profile 4: Sport -->
+          <div class="profile-card" data-gear="4" onclick="selectProfile(4)">
+            <div class="p-header">
+              <span class="p-gear">Gear 4</span>
+              <span class="p-limit">40+ <small style="font-size:11px">km/h</small></span>
+            </div>
+            <div class="p-name">Sport / Unlock</div>
+            <div class="p-amps">Max 120A • Full Power</div>
+          </div>
         </div>
+
+        <!-- Tuning & Quick Controls -->
+        <div class="section-title">
+          <span>Brake & Tuning</span>
+        </div>
+
+        <div class="controls-card">
+          <div>
+            <div class="control-row">
+              <span class="control-label">E-Brake Strength</span>
+              <span id="brake-amp-val" class="slider-val">25.0 A</span>
+            </div>
+            <div class="control-sub">Regenerative braking current</div>
+          </div>
+
+          <div class="slider-wrap">
+            <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
+          </div>
+
+          <div class="btn-action-row">
+            <button class="btn-secondary" onclick="toggleKickStart()">
+              <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
+            </button>
+            <button class="btn-secondary" onclick="sendCmd('S')">
+              <span>📡</span> Refresh Status
+            </button>
+          </div>
+        </div>
+
+        <!-- Console Drawer -->
+        <details class="console-drawer" id="console-drawer">
+          <summary>
+            <span>🖥️ Live Console & Custom Command</span>
+            <span style="font-size: 10px;">▼</span>
+          </summary>
+          <div class="console-body">
+            <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
+            <div class="console-input-row">
+              <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, BC 30, R, ?" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
+              <button class="btn-secondary" style="min-height:32px; padding: 0 14px;" onclick="sendCustomCmd()">Send</button>
+            </div>
+          </div>
+        </details>
       </div>
+
     </div>
-
-    <!-- Speed Profile Selector -->
-    <div class="section-title">
-      <span>Speed Profiles</span>
-      <span id="active-profile-label" style="color: var(--accent-cyan);">P1: Eco</span>
-    </div>
-
-    <div class="profiles-grid">
-      <!-- Profile 1: Eco -->
-      <div class="profile-card active" data-gear="1" onclick="selectProfile(1)">
-        <div class="p-header">
-          <span class="p-gear">Gear 1</span>
-          <span class="p-limit">10 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Eco Mode</div>
-        <div class="p-amps">Max 25A • Smooth</div>
-      </div>
-
-      <!-- Profile 2: City -->
-      <div class="profile-card" data-gear="2" onclick="selectProfile(2)">
-        <div class="p-header">
-          <span class="p-gear">Gear 2</span>
-          <span class="p-limit">15 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">City Cruising</div>
-        <div class="p-amps">Max 40A • Agile</div>
-      </div>
-
-      <!-- Profile 3: Drive -->
-      <div class="profile-card" data-gear="3" onclick="selectProfile(3)">
-        <div class="p-header">
-          <span class="p-gear">Gear 3</span>
-          <span class="p-limit">25 <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Drive (Legal)</div>
-        <div class="p-amps">Max 65A • Dynamic</div>
-      </div>
-
-      <!-- Profile 4: Sport -->
-      <div class="profile-card" data-gear="4" onclick="selectProfile(4)">
-        <div class="p-header">
-          <span class="p-gear">Gear 4</span>
-          <span class="p-limit">40+ <small style="font-size:11px">km/h</small></span>
-        </div>
-        <div class="p-name">Sport / Unlock</div>
-        <div class="p-amps">Max 120A • Full Power</div>
-      </div>
-    </div>
-
-    <!-- Live Telemetry -->
-    <div class="section-title">
-      <span>Telemetry</span>
-    </div>
-
-    <div class="telem-grid">
-      <div class="telem-box">
-        <span class="telem-label">Battery</span>
-        <span id="disp-voltage" class="telem-val">--</span>
-        <span class="telem-unit">Volts</span>
-      </div>
-      <div class="telem-box">
-        <span class="telem-label">Target</span>
-        <span id="disp-current" class="telem-val">0.0</span>
-        <span class="telem-unit">Amps</span>
-      </div>
-      <div class="telem-box">
-        <span class="telem-label">Throttle</span>
-        <span id="disp-throttle" class="telem-val">--</span>
-        <span class="telem-unit">ADC Raw</span>
-      </div>
-    </div>
-
-    <!-- Tuning & Quick Controls -->
-    <div class="section-title">
-      <span>Brake & Tuning</span>
-    </div>
-
-    <div class="controls-card">
-      <div>
-        <div class="control-row">
-          <span class="control-label">E-Brake Strength</span>
-          <span id="brake-amp-val" class="slider-val">25.0 A</span>
-        </div>
-        <div class="control-sub">Regenerative braking current</div>
-      </div>
-
-      <div class="slider-wrap">
-        <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
-      </div>
-
-      <div class="btn-action-row">
-        <button class="btn-secondary" onclick="toggleKickStart()">
-          <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
-        </button>
-        <button class="btn-secondary" onclick="sendCmd('S')">
-          <span>📡</span> Refresh Status
-        </button>
-      </div>
-    </div>
-
-    <!-- Console Drawer -->
-    <details class="console-drawer" id="console-drawer">
-      <summary>
-        <span>🖥️ Live Console & Custom Command</span>
-        <span style="font-size: 10px;">▼</span>
-      </summary>
-      <div class="console-body">
-        <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
-        <div class="console-input-row">
-          <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, BC 30, R, ?" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
-          <button class="btn-secondary" style="min-height:38px; padding: 0 16px;" onclick="sendCustomCmd()">Send</button>
-        </div>
-      </div>
-    </details>
 
   </div>
 
