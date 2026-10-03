@@ -1067,6 +1067,7 @@ void setup() {
   prefs.begin("scooter", false);
   displayRxPin = prefs.getInt("disp_rx", 22);
   displayTxPin = prefs.getInt("disp_tx", 23);
+  pinMode(displayRxPin, INPUT_PULLUP);
   // Display is on UART1 (DisplaySerial) at 1200 Baud
   DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
