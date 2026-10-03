@@ -17,7 +17,7 @@
   <style>
     :root {
       --bg-dark: #070a12;
-      --bg-card: rgba(18, 24, 38, 0.72);
+      --bg-card: rgba(18, 24, 38, 0.75);
       --bg-card-hover: rgba(28, 38, 60, 0.85);
       --bg-card-active: rgba(36, 50, 80, 0.95);
       --border-card: rgba(255, 255, 255, 0.08);
@@ -85,6 +85,7 @@
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
       border-radius: 18px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
     }
 
     .brand {
@@ -126,6 +127,48 @@
       font-size: 11px;
       color: var(--text-muted);
       font-weight: 500;
+    }
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    /* Settings Button */
+    .btn-settings {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 38px;
+      height: 38px;
+      border-radius: 12px;
+      border: 1px solid var(--border-card);
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+      flex-shrink: 0;
+    }
+
+    .btn-settings svg {
+      width: 18px;
+      height: 18px;
+      transition: transform 0.3s ease;
+    }
+
+    .btn-settings:hover {
+      background: rgba(255, 255, 255, 0.1);
+      color: #ffffff;
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+
+    .btn-settings:active {
+      transform: scale(0.92);
+    }
+
+    .btn-settings:active svg {
+      transform: rotate(45deg);
     }
 
     /* Connect Button */
@@ -199,18 +242,12 @@
       text-decoration: underline;
     }
 
-    /* Cockpit Grid */
-    .cockpit-grid {
+    /* Cockpit Main Body */
+    .cockpit-main {
       display: flex;
       flex-direction: column;
       gap: 12px;
       width: 100%;
-    }
-
-    .cockpit-column {
-      display: flex;
-      flex-direction: column;
-      gap: 12px;
     }
 
     /* Speedometer Hero Display */
@@ -227,13 +264,13 @@
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      box-shadow: 0 16px 32px rgba(0, 0, 0, 0.4);
+      box-shadow: 0 16px 36px rgba(0, 0, 0, 0.45);
     }
 
     .speed-gauge-wrap {
       position: relative;
-      width: 200px;
-      height: 115px;
+      width: 220px;
+      height: 125px;
       display: flex;
       justify-content: center;
       align-items: flex-end;
@@ -243,15 +280,15 @@
       position: absolute;
       top: 0;
       left: 0;
-      width: 200px;
-      height: 200px;
+      width: 220px;
+      height: 220px;
       transform: rotate(-90deg);
     }
 
     .gauge-bg {
       fill: none;
       stroke: rgba(255, 255, 255, 0.07);
-      stroke-width: 14;
+      stroke-width: 13;
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 0;
@@ -260,7 +297,7 @@
     .gauge-fill {
       fill: none;
       stroke: url(#cyanGrad);
-      stroke-width: 14;
+      stroke-width: 13;
       stroke-linecap: round;
       stroke-dasharray: 283;
       stroke-dashoffset: 283;
@@ -270,33 +307,34 @@
     .speed-value-box {
       z-index: 2;
       text-align: center;
-      margin-bottom: 2px;
+      margin-bottom: 4px;
     }
 
     .speed-num {
       font-family: var(--font-display);
-      font-size: 60px;
+      font-size: 68px;
       font-weight: 900;
-      line-height: 0.9;
-      letter-spacing: -1.5px;
+      line-height: 0.88;
+      letter-spacing: -2px;
       color: #ffffff;
-      text-shadow: 0 0 20px rgba(0, 242, 254, 0.3);
+      text-shadow: 0 0 24px rgba(0, 242, 254, 0.35);
     }
 
     .speed-unit {
       font-size: 12px;
-      font-weight: 700;
-      color: var(--text-muted);
-      letter-spacing: 2px;
+      font-weight: 800;
+      color: var(--accent-cyan);
+      letter-spacing: 2.5px;
       text-transform: uppercase;
-      margin-top: 3px;
+      margin-top: 4px;
+      text-shadow: 0 0 10px rgba(0, 242, 254, 0.2);
     }
 
     /* Badges row below gauge */
     .hero-badges {
       display: flex;
       gap: 8px;
-      margin-top: 10px;
+      margin-top: 12px;
       z-index: 2;
       flex-wrap: wrap;
       justify-content: center;
@@ -349,6 +387,48 @@
       color: var(--accent-emerald);
     }
 
+    /* Telemetry Grid inside Speedo Widget */
+    .telem-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      width: 100%;
+      margin-top: 14px;
+    }
+
+    .telem-box {
+      background: rgba(0, 0, 0, 0.25);
+      border: 1px solid rgba(255, 255, 255, 0.05);
+      border-radius: 14px;
+      padding: 10px 8px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      transition: border-color 0.2s ease;
+    }
+
+    .telem-label {
+      font-size: 9px;
+      font-weight: 700;
+      color: var(--text-dim);
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+    }
+
+    .telem-val {
+      font-family: var(--font-display);
+      font-size: 20px;
+      font-weight: 800;
+      color: #fff;
+    }
+
+    .telem-unit {
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--text-muted);
+    }
+
     /* Section Title */
     .section-title {
       font-family: var(--font-display);
@@ -377,13 +457,14 @@
       -webkit-backdrop-filter: blur(20px);
       border: 1px solid var(--border-card);
       border-radius: 18px;
-      padding: 14px 12px;
+      padding: 14px 14px;
       display: flex;
       flex-direction: column;
       gap: 4px;
       cursor: pointer;
       transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
       overflow: hidden;
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
     }
 
     .profile-card:active {
@@ -403,11 +484,12 @@
       letter-spacing: 1px;
       text-transform: uppercase;
       color: var(--text-dim);
+      transition: color 0.2s ease;
     }
 
     .profile-card .p-limit {
       font-family: var(--font-display);
-      font-size: 18px;
+      font-size: 19px;
       font-weight: 800;
       color: #fff;
     }
@@ -428,7 +510,7 @@
     .profile-card.active {
       border-color: var(--card-accent);
       background: var(--bg-card-active);
-      box-shadow: 0 0 18px var(--card-glow);
+      box-shadow: 0 0 20px var(--card-glow);
     }
 
     .profile-card.active .p-gear {
@@ -437,67 +519,185 @@
 
     .profile-card[data-gear="1"] {
       --card-accent: var(--accent-emerald);
-      --card-glow: rgba(16, 185, 129, 0.25);
+      --card-glow: rgba(16, 185, 129, 0.3);
     }
     .profile-card[data-gear="2"] {
       --card-accent: var(--accent-cyan);
-      --card-glow: rgba(0, 242, 254, 0.25);
+      --card-glow: rgba(0, 242, 254, 0.3);
     }
     .profile-card[data-gear="3"] {
       --card-accent: var(--accent-amber);
-      --card-glow: rgba(245, 158, 11, 0.25);
+      --card-glow: rgba(245, 158, 11, 0.3);
     }
     .profile-card[data-gear="4"] {
       --card-accent: var(--accent-rose);
       --card-glow: rgba(244, 63, 94, 0.35);
     }
 
-    /* Telemetry Grid */
-    .telem-grid {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 8px;
+    /* =========================================================================
+       SETTINGS MODAL / DRAWER
+       ========================================================================= */
+    .settings-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(3, 6, 12, 0.75);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      z-index: 1000;
+      display: flex;
+      justify-content: center;
+      align-items: flex-end;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.3s cubic-bezier(0.4, 0, 0.2, 1);
     }
 
-    .telem-box {
-      background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid var(--border-card);
-      border-radius: 14px;
-      padding: 10px 8px;
-      text-align: center;
+    .settings-backdrop.open {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
+    .settings-sheet {
+      background: #0d121f;
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      border-bottom: none;
+      border-radius: 28px 28px 0 0;
+      width: 100%;
+      max-width: 540px;
+      max-height: 90vh;
+      max-height: 90dvh;
       display: flex;
       flex-direction: column;
-      gap: 1px;
+      box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.7);
+      transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      overflow: hidden;
     }
 
-    .telem-label {
-      font-size: 9px;
-      font-weight: 700;
-      color: var(--text-dim);
-      letter-spacing: 0.8px;
-      text-transform: uppercase;
+    .settings-backdrop.open .settings-sheet {
+      transform: translateY(0);
     }
 
-    .telem-val {
+    .settings-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 20px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+      position: relative;
+    }
+
+    .settings-drag-pill {
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 36px;
+      height: 4px;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 2px;
+    }
+
+    .settings-title-group h2 {
       font-family: var(--font-display);
-      font-size: 18px;
+      font-size: 17px;
       font-weight: 800;
+      letter-spacing: 0.5px;
       color: #fff;
     }
 
-    .telem-unit {
-      font-size: 10px;
-      font-weight: 500;
+    .settings-title-group p {
+      font-size: 11px;
       color: var(--text-muted);
+      margin-top: 1px;
     }
 
-    /* Controls & Quick Actions */
+    .btn-close-settings {
+      width: 34px;
+      height: 34px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 1px solid var(--border-card);
+      color: var(--text-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      font-size: 16px;
+      transition: all 0.2s ease;
+    }
+
+    .btn-close-settings:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    .btn-close-settings:active {
+      transform: scale(0.9);
+    }
+
+    /* Settings Navigation Tabs */
+    .settings-tabs {
+      display: flex;
+      gap: 6px;
+      padding: 10px 16px;
+      background: rgba(0, 0, 0, 0.3);
+      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .settings-tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: 12px;
+      font-family: var(--font-display);
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--text-muted);
+      background: transparent;
+      border: 1px solid transparent;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: all 0.2s ease;
+    }
+
+    .tab-btn.active {
+      background: rgba(0, 242, 254, 0.12);
+      border-color: rgba(0, 242, 254, 0.35);
+      color: var(--accent-cyan);
+      box-shadow: 0 2px 8px rgba(0, 242, 254, 0.15);
+    }
+
+    .settings-content {
+      padding: 16px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      max-height: calc(90vh - 120px);
+      max-height: calc(90dvh - 120px);
+    }
+
+    .tab-panel {
+      display: none;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .tab-panel.active {
+      display: flex;
+    }
+
+    /* Common Card Styles inside Settings */
     .controls-card {
-      background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-card);
       border-radius: 18px;
       padding: 14px 16px;
@@ -545,7 +745,7 @@
       font-size: 12px;
       font-weight: 700;
       color: var(--accent-rose);
-      min-width: 44px;
+      min-width: 48px;
       text-align: right;
     }
 
@@ -755,103 +955,9 @@
       align-items: center;
     }
 
-    /* Console Drawer */
-    details.console-drawer {
-      background: var(--bg-card);
-      border: 1px solid var(--border-card);
-      border-radius: 14px;
-      overflow: hidden;
-    }
-
-    details.console-drawer summary {
-      padding: 10px 14px;
-      font-size: 11px;
-      font-weight: 700;
-      color: var(--text-muted);
-      cursor: pointer;
-      list-style: none;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-    }
-
-    details.console-drawer summary::-webkit-details-marker {
-      display: none;
-    }
-
-    .console-body {
-      padding: 10px 14px 12px;
-      border-top: 1px solid var(--border-card);
-      display: flex;
-      flex-direction: column;
-      gap: 8px;
-    }
-
-    .console-log {
-      height: 70px;
-      background: rgba(0, 0, 0, 0.4);
-      border-radius: 8px;
-      padding: 6px 8px;
-      font-family: var(--font-mono);
-      font-size: 10px;
-      color: #34d399;
-      overflow-y: auto;
-      white-space: pre-wrap;
-      word-break: break-all;
-    }
-
-    .console-input-row {
-      display: flex;
-      gap: 6px;
-    }
-
-    .console-input {
-      flex: 1;
-      background: rgba(0, 0, 0, 0.3);
-      border: 1px solid var(--border-card);
-      border-radius: 8px;
-      padding: 6px 8px;
-      font-family: var(--font-mono);
-      font-size: 11px;
-      color: #fff;
-      outline: none;
-    }
-
-    .console-input:focus {
-      border-color: var(--accent-cyan);
-    }
-
-    /* Toast Notification */
-    .toast {
-      position: fixed;
-      bottom: 18px;
-      left: 50%;
-      transform: translateX(-50%) translateY(100px);
-      background: rgba(15, 23, 42, 0.95);
-      border: 1px solid var(--accent-cyan);
-      color: #fff;
-      padding: 8px 18px;
-      border-radius: 25px;
-      font-size: 12px;
-      font-weight: 600;
-      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
-      backdrop-filter: blur(10px);
-      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-      z-index: 100;
-      pointer-events: none;
-    }
-
-    .toast.show {
-      transform: translateX(-50%) translateY(0);
-    }
-
-    /* =========================================================================
-       GPS TRIP COMPUTER & ODOMETER CARD
-       ========================================================================= */
+    /* GPS Trip Computer Card */
     .trip-card {
-      background: var(--bg-card);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      background: rgba(255, 255, 255, 0.03);
       border: 1px solid var(--border-card);
       border-radius: 20px;
       padding: 14px 16px;
@@ -1116,7 +1222,6 @@
       transform: scale(0.96);
     }
 
-    /* Footer Odometer & Info */
     .trip-footer {
       display: flex;
       justify-content: space-between;
@@ -1155,158 +1260,166 @@
       color: var(--accent-emerald);
     }
 
+    /* Console Drawer & Log */
+    .console-card {
+      background: rgba(255, 255, 255, 0.03);
+      border: 1px solid var(--border-card);
+      border-radius: 18px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .console-log {
+      height: 120px;
+      background: rgba(0, 0, 0, 0.4);
+      border-radius: 10px;
+      padding: 8px 10px;
+      font-family: var(--font-mono);
+      font-size: 10.5px;
+      color: #34d399;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+      border: 1px solid rgba(255, 255, 255, 0.05);
+    }
+
+    .console-input-row {
+      display: flex;
+      gap: 6px;
+    }
+
+    .console-input {
+      flex: 1;
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-card);
+      border-radius: 8px;
+      padding: 7px 10px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: #fff;
+      outline: none;
+    }
+
+    .console-input:focus {
+      border-color: var(--accent-cyan);
+    }
+
+    .quick-chips-row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+
+    .quick-chip {
+      padding: 4px 8px;
+      border-radius: 8px;
+      font-size: 10px;
+      font-family: var(--font-mono);
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border-card);
+      color: var(--text-muted);
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+
+    .quick-chip:hover {
+      background: rgba(0, 242, 254, 0.15);
+      color: var(--accent-cyan);
+      border-color: rgba(0, 242, 254, 0.3);
+    }
+
+    /* Toast Notification */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%) translateY(100px);
+      background: rgba(15, 23, 42, 0.95);
+      border: 1px solid var(--accent-cyan);
+      color: #fff;
+      padding: 9px 20px;
+      border-radius: 25px;
+      font-size: 12px;
+      font-weight: 600;
+      box-shadow: 0 10px 25px rgba(0, 0, 0, 0.5);
+      backdrop-filter: blur(10px);
+      transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+      z-index: 2000;
+      pointer-events: none;
+    }
+
+    .toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
+
     /* =========================================================================
-       HORIZONTAL / LANDSCAPE COCKPIT OPTIMIZATION
+       LANDSCAPE & DESKTOP COCKPIT OPTIMIZATION
        ========================================================================= */
     @media (orientation: landscape) and (min-width: 560px), (min-width: 820px) {
       body {
-        padding: max(8px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+        padding: max(10px, env(safe-area-inset-top)) max(20px, env(safe-area-inset-right)) max(10px, env(safe-area-inset-bottom)) max(20px, env(safe-area-inset-left));
         justify-content: center;
       }
 
       .container {
-        max-width: 1080px;
-        gap: 10px;
+        max-width: 840px;
+        gap: 12px;
       }
 
       header {
-        padding: 8px 14px;
-        border-radius: 14px;
+        padding: 8px 16px;
       }
 
-      .brand-icon {
-        width: 28px;
-        height: 28px;
-      }
-
-      .brand-text h1 {
-        font-size: 15px;
-      }
-
-      .btn-connect {
-        padding: 6px 12px;
-        font-size: 12px;
-      }
-
-      /* 3-Column Cockpit Layout */
-      .cockpit-grid {
+      .cockpit-main {
         display: grid;
-        grid-template-columns: 1fr 1.25fr 1fr;
-        gap: 12px;
+        grid-template-columns: 1.15fr 1fr;
+        gap: 14px;
         align-items: stretch;
       }
 
-      .cockpit-column {
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-        gap: 10px;
-      }
-
-      /* Center Speedometer Wing */
       .speedo-hero {
-        padding: 10px 14px 10px;
-        border-radius: 20px;
-        gap: 6px;
+        padding: 16px 16px 14px;
+        height: 100%;
+        justify-content: space-between;
       }
 
       .speed-gauge-wrap {
-        width: 170px;
-        height: 88px;
+        width: 190px;
+        height: 105px;
       }
 
       .speed-gauge-svg {
-        width: 170px;
-        height: 170px;
+        width: 190px;
+        height: 190px;
       }
 
       .speed-num {
-        font-size: 46px;
-      }
-
-      .speed-unit {
-        font-size: 10px;
-      }
-
-      .hero-badges {
-        margin-top: 2px;
-      }
-
-      /* Left & Right Wings */
-      .controls-card {
-        padding: 12px 14px;
-        border-radius: 16px;
-        gap: 10px;
-        height: 100%;
-        justify-content: space-around;
+        font-size: 56px;
       }
 
       .profiles-grid {
         grid-template-columns: repeat(2, 1fr);
-        gap: 8px;
+        height: 100%;
+        align-content: stretch;
       }
 
       .profile-card {
-        padding: 10px 10px;
-        border-radius: 14px;
-        gap: 2px;
+        padding: 12px;
+        justify-content: center;
       }
 
-      .profile-card .p-limit {
-        font-size: 16px;
+      .settings-sheet {
+        border-radius: 24px;
+        margin-bottom: auto;
+        margin-top: auto;
+        max-height: 85vh;
+        max-height: 85dvh;
       }
-
-      .profile-card .p-name {
-        font-size: 12px;
-      }
-
-      .profile-card .p-amps {
-        font-size: 10px;
-      }
-
-      .telem-grid {
-        gap: 6px;
-      }
-
-      .telem-box {
-        padding: 8px 6px;
-        border-radius: 12px;
-      }
-
-      .telem-val {
-        font-size: 16px;
-      }
-
-      .console-log {
-        height: 55px;
-      }
-
-      .trip-card {
-        padding: 10px 12px;
-        gap: 8px;
-        border-radius: 16px;
-      }
-
-      .trip-main-display {
-        padding: 6px 10px;
-      }
-
-      .trip-dist-num {
-        font-size: 26px;
-      }
-
-      .trip-stat-val {
-        font-size: 13px;
-      }
-
-      .btn-trip-main {
-        padding: 8px 10px;
-        font-size: 12px;
-      }
-
-      .btn-trip-aux {
-        padding: 8px 4px;
-        font-size: 10px;
+      
+      .settings-backdrop {
+        align-items: center;
       }
     }
   </style>
@@ -1329,10 +1442,21 @@
         </div>
       </div>
       
-      <button id="btn-ble" class="btn-connect" onclick="toggleBleConnection()">
-        <span class="status-dot"></span>
-        <span id="ble-btn-text">Connect</span>
-      </button>
+      <div class="header-actions">
+        <!-- Settings Gear Button -->
+        <button id="btn-settings" class="btn-settings" onclick="openSettings()" title="Open Settings & Diagnostics" aria-label="Settings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
+        </button>
+
+        <!-- BLE Connect Button -->
+        <button id="btn-ble" class="btn-connect" onclick="toggleBleConnection()">
+          <span class="status-dot"></span>
+          <span id="ble-btn-text">Connect</span>
+        </button>
+      </div>
     </header>
 
     <!-- Browser Warning (if Web Bluetooth unsupported) -->
@@ -1341,240 +1465,65 @@
       iOS Safari does not support Bluetooth directly. Please open this page in the free <a href="https://apps.apple.com/app/bluefy-web-ble-browser/id1492822055" target="_blank">Bluefy Web BLE Browser</a> from the App Store.
     </div>
 
-    <!-- Main Cockpit 3-Column / Responsive Grid -->
-    <div class="cockpit-grid">
+    <!-- Main Cockpit View: Speed Widget + Telemetry Triplet + Speed Profiles (Gears) -->
+    <main class="cockpit-main">
       
-      <!-- LEFT WING: Brake Tuning & Drive Settings -->
-      <div class="cockpit-column">
-        
-        <div class="section-title">
-          <span>Drive Settings</span>
-        </div>
-
-        <div class="controls-card">
-          <div>
-            <div class="control-row">
-              <span class="control-label">E-Brake Strength</span>
-              <span id="brake-amp-val" class="slider-val">25.0 A</span>
-            </div>
-            <div class="control-sub">Regenerative current</div>
-          </div>
-
-          <div class="slider-wrap">
-            <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
-          </div>
-
-          <div class="btn-action-row">
-            <button id="btn-brake-toggle" class="btn-secondary active-brake-btn" onclick="toggleBrakeEnable()">
-              <span id="btn-brake-icon">🛑</span> <span id="btn-brake-text">Brake: ENABLED</span>
-            </button>
-            <button class="btn-secondary" onclick="toggleKickStart()">
-              <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
-            </button>
-            <button class="btn-secondary" style="grid-column: span 2;" onclick="sendCmd('S')">
-              <span>📡</span> Status Query
-            </button>
+      <!-- HERO SPEEDOMETER & TELEMETRY WIDGET -->
+      <section class="speedo-hero" aria-label="Speed and Live Telemetry">
+        <div class="speed-gauge-wrap">
+          <svg class="speed-gauge-svg" viewBox="0 0 100 100">
+            <defs>
+              <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" stop-color="#00f2fe" />
+                <stop offset="60%" stop-color="#4facfe" />
+                <stop offset="100%" stop-color="#9d4edd" />
+              </linearGradient>
+            </defs>
+            <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
+            <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
+          </svg>
+          
+          <div class="speed-value-box">
+            <div id="disp-speed" class="speed-num">0.0</div>
+            <div class="speed-unit">KM / H</div>
           </div>
         </div>
 
-        <!-- Phone Proximity & Anti-Theft Security Card -->
-        <div class="section-title" style="margin-top: 10px;">
-          <span>Security & Key</span>
-          <span id="garmin-status-tag" style="color: var(--text-dim); font-size: 11px;">📱 Key Off</span>
-        </div>
-
-        <div class="controls-card garmin-card" id="garmin-card">
-          <!-- Live Status Banner -->
-          <div id="garmin-banner" class="garmin-banner disabled">
-            <div class="garmin-banner-icon" id="garmin-banner-icon">🛡️</div>
-            <div class="garmin-banner-info">
-              <div class="garmin-banner-title" id="garmin-banner-title">AUTO-LOCK DISABLED</div>
-              <div class="garmin-banner-sub" id="garmin-banner-sub">Enable to lock scooter when phone is away</div>
-            </div>
+        <!-- Live Status Indicators -->
+        <div class="hero-badges">
+          <div id="badge-brake" class="badge">
+            <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
           </div>
-
-          <!-- Live Signal & Proximity Radar -->
-          <div class="garmin-signal-box">
-            <div class="garmin-signal-header">
-              <span class="control-label">Phone Proximity</span>
-              <span id="disp-garmin-rssi" class="garmin-rssi-val">Disabled</span>
-            </div>
-            <div class="garmin-meter-wrap">
-              <div id="garmin-meter-bar" class="garmin-meter-bar" style="width: 0%;"></div>
-            </div>
-            <div class="garmin-device-info" id="garmin-device-info">Target: Kirill's iPhone / Apple / Auto</div>
+          <div id="badge-lock" class="badge">
+            <span>🔓</span> <span id="lock-text">AUTO-LOCK OFF</span>
           </div>
-
-          <!-- Action Buttons -->
-          <div class="btn-action-row">
-            <button id="btn-garmin-toggle" class="btn-secondary" onclick="toggleGarminLock()">
-              <span id="btn-garmin-icon">🛡️</span> <span id="btn-garmin-text">Auto-Lock: OFF</span>
-            </button>
-            <button id="btn-garmin-learn" class="btn-secondary" onclick="pairIphone()">
-              <span>📱</span> <span>Pair iPhone</span>
-            </button>
-            <button id="btn-manual-unlock" class="btn-secondary" onclick="sendManualUnlock()">
-              <span>🔓</span> <span>Unlock</span>
-            </button>
-            <button id="btn-manual-lock" class="btn-secondary" onclick="sendManualLock()">
-              <span>🔒</span> <span>Force Lock</span>
-            </button>
-          </div>
-
-          <!-- Collapsible Settings -->
-          <details class="garmin-details">
-            <summary>
-              <span>⚙️ Distance & Sensitivity</span>
-              <span style="font-size: 9px;">▼</span>
-            </summary>
-            <div class="garmin-settings-body">
-              <div class="control-row" style="margin-top: 6px;">
-                <span class="control-label">Lock Distance (RSSI)</span>
-                <span id="rssi-thold-val" class="slider-val">-85 dBm</span>
-              </div>
-              <div class="slider-wrap">
-                <input type="range" id="rssi-slider" class="range-input" min="-100" max="-60" step="1" value="-85" oninput="updateRssiSlider(this.value)" onchange="sendRssiThreshold(this.value)" />
-              </div>
-              <div class="control-row" style="margin-top: 8px;">
-                <span class="control-label">Lockout Timeout</span>
-                <span id="timeout-val" class="slider-val">6 s</span>
-              </div>
-              <div class="slider-wrap">
-                <input type="range" id="timeout-slider" class="range-input" min="3" max="20" step="1" value="6" oninput="updateTimeoutSlider(this.value)" onchange="sendTimeout(this.value)" />
-              </div>
-              <div class="garmin-mac-input-wrap" style="margin-top: 8px;">
-                <input type="text" id="garmin-mac-input" class="console-input" placeholder="Phone Name (e.g. Kirill or iPhone)" />
-                <button class="btn-secondary" style="padding: 4px 8px;" onclick="sendCustomName()">Set</button>
-              </div>
-            </div>
-          </details>
-        </div>
-
-      </div>
-
-      <!-- CENTER WING: Speedometer & Core Telemetry -->
-      <div class="cockpit-column">
-        <div class="speedo-hero">
-          <div class="speed-gauge-wrap">
-            <svg class="speed-gauge-svg" viewBox="0 0 100 100">
-              <defs>
-                <linearGradient id="cyanGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                  <stop offset="0%" stop-color="#00f2fe" />
-                  <stop offset="60%" stop-color="#4facfe" />
-                  <stop offset="100%" stop-color="#9d4edd" />
-                </linearGradient>
-              </defs>
-              <path class="gauge-bg" d="M 50,95 A 45,45 0 0,1 50,5" />
-              <path id="gauge-bar" class="gauge-fill" d="M 50,95 A 45,45 0 0,1 50,5" />
-            </svg>
-            
-            <div class="speed-value-box">
-              <div id="disp-speed" class="speed-num">0.0</div>
-              <div class="speed-unit">KM / H</div>
-            </div>
-          </div>
-
-          <div class="hero-badges">
-            <div id="badge-brake" class="badge">
-              <span>🛑</span> <span id="brake-text">BRAKE OFF</span>
-            </div>
-            <div id="badge-lock" class="badge">
-              <span>🔓</span> <span id="lock-text">AUTO-LOCK OFF</span>
-            </div>
-            <div id="badge-kick" class="badge active-kick">
-              <span>⚡</span> <span id="kick-text">ZERO START</span>
-            </div>
-          </div>
-
-          <!-- Compact Live Telemetry Triplet -->
-          <div class="telem-grid" style="width: 100%; margin-top: 6px;">
-            <div class="telem-box">
-              <span class="telem-label">Battery</span>
-              <span id="disp-voltage" class="telem-val">--</span>
-              <span class="telem-unit">Volts</span>
-            </div>
-            <div class="telem-box">
-              <span class="telem-label">Target</span>
-              <span id="disp-current" class="telem-val">0.0</span>
-              <span class="telem-unit">Amps</span>
-            </div>
-            <div class="telem-box">
-              <span class="telem-label">Throttle</span>
-              <span id="disp-throttle" class="telem-val">--</span>
-              <span class="telem-unit">ADC Raw</span>
-            </div>
+          <div id="badge-kick" class="badge active-kick">
+            <span>⚡</span> <span id="kick-text">ZERO START</span>
           </div>
         </div>
 
-        <!-- GPS Trip Computer Card -->
-        <div id="trip-card" class="trip-card">
-          <div class="trip-header">
-            <div class="trip-title-wrap">
-              <span class="trip-icon">📍</span>
-              <span class="trip-title">GPS Trip Computer</span>
-            </div>
-            <div id="gps-status-badge" class="gps-badge gps-idle">
-              <span class="gps-dot"></span>
-              <span id="gps-status-text">GPS Ready</span>
-            </div>
+        <!-- Compact Live Telemetry Triplet (As requested) -->
+        <div class="telem-grid">
+          <div class="telem-box">
+            <span class="telem-label">Battery</span>
+            <span id="disp-voltage" class="telem-val">--</span>
+            <span class="telem-unit">Volts</span>
           </div>
-
-          <div class="trip-main-display">
-            <div class="trip-dist-val-wrap">
-              <span id="trip-distance" class="trip-dist-num">0.00</span>
-              <span class="trip-dist-unit">KM</span>
-            </div>
-            <div class="trip-dist-sub" id="trip-distance-sub">0 m ridden</div>
+          <div class="telem-box">
+            <span class="telem-label">Target</span>
+            <span id="disp-current" class="telem-val">0.0</span>
+            <span class="telem-unit">Amps</span>
           </div>
-
-          <div class="trip-stats-grid">
-            <div class="trip-stat-box">
-              <span class="trip-stat-label">Duration</span>
-              <span id="trip-time" class="trip-stat-val">00:00:00</span>
-              <span class="trip-stat-sub">Ride Time</span>
-            </div>
-            <div class="trip-stat-box">
-              <span class="trip-stat-label">Avg Speed</span>
-              <span id="trip-avg-speed" class="trip-stat-val">0.0</span>
-              <span class="trip-stat-sub">km/h</span>
-            </div>
-            <div class="trip-stat-box">
-              <span class="trip-stat-label">Top Speed</span>
-              <span id="trip-max-speed" class="trip-stat-val">0.0</span>
-              <span class="trip-stat-sub">km/h</span>
-            </div>
-          </div>
-
-          <div class="trip-actions-wrap">
-            <button id="btn-trip-toggle" class="btn-trip-main btn-trip-start" onclick="toggleTripRecording()">
-              <span id="btn-trip-icon">▶</span> <span id="btn-trip-text">START TRIP</span>
-            </button>
-            <div class="trip-aux-buttons">
-              <button id="btn-trip-pause" class="btn-trip-aux" onclick="togglePauseTrip()" disabled title="Pause or resume trip">
-                <span id="btn-pause-icon">⏸</span> <span id="btn-pause-text">Pause</span>
-              </button>
-              <button id="btn-trip-reset" class="btn-trip-aux" onclick="resetTripData()" title="Reset current trip metrics">
-                <span>🔄</span> <span>Reset</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="trip-footer">
-            <div class="trip-odo" onclick="promptResetOdometer()" title="Click to manage total odometer" style="cursor: pointer;">
-              <span class="trip-odo-label">ODO:</span>
-              <span id="disp-odo" class="trip-odo-val">0.00 km</span>
-            </div>
-            <div class="trip-wake-status" id="trip-wake-status" title="Screen Wake Lock">
-              <span>📱</span> <span id="wake-status-text">Wake Lock: Off</span>
-            </div>
+          <div class="telem-box">
+            <span class="telem-label">Throttle</span>
+            <span id="disp-throttle" class="telem-val">--</span>
+            <span class="telem-unit">ADC Raw</span>
           </div>
         </div>
+      </section>
 
-      </div>
-
-      <!-- RIGHT WING: Speed Profiles & Console -->
-      <div class="cockpit-column">
-        
+      <!-- SPEED PROFILES & GEARS -->
+      <section aria-label="Speed Profiles and Gears" style="display: flex; flex-direction: column; gap: 8px;">
         <div class="section-title">
           <span>Speed Profiles</span>
           <span id="active-profile-label" style="color: var(--accent-cyan); font-size: 11px;">P1: Eco</span>
@@ -1621,26 +1570,241 @@
             <div class="p-amps">120A • Full</div>
           </div>
         </div>
+      </section>
 
-        <!-- Collapsible Console Drawer -->
-        <details class="console-drawer">
-          <summary>
-            <span>🖥️ Console & Command</span>
-            <span style="font-size: 10px;">▼</span>
-          </summary>
-          <div class="console-body">
+    </main>
+
+  </div>
+
+  <!-- =========================================================================
+       SETTINGS & CONTROLS MODAL / DRAWER
+       ========================================================================= -->
+  <div id="settings-modal" class="settings-backdrop" onclick="handleBackdropClick(event)">
+    <div class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settings-heading">
+      
+      <div class="settings-drag-pill"></div>
+
+      <!-- Settings Header -->
+      <div class="settings-header">
+        <div class="settings-title-group">
+          <h2 id="settings-heading">Settings & Diagnostics</h2>
+          <p>Tuning, trip tracker, security & console</p>
+        </div>
+        <button class="btn-close-settings" onclick="closeSettings()" aria-label="Close Settings">✕</button>
+      </div>
+
+      <!-- Settings Navigation Tabs -->
+      <div class="settings-tabs">
+        <button class="tab-btn active" data-tab="tab-drive" onclick="switchSettingsTab('tab-drive')">
+          <span>🏎️</span> <span>Drive & Brake</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-trip" onclick="switchSettingsTab('tab-trip')">
+          <span>📍</span> <span>GPS Trip</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-security" onclick="switchSettingsTab('tab-security')">
+          <span>🛡️</span> <span>Proximity Key</span>
+        </button>
+        <button class="tab-btn" data-tab="tab-console" onclick="switchSettingsTab('tab-console')">
+          <span>🖥️</span> <span>Console</span>
+        </button>
+      </div>
+
+      <!-- Settings Scrollable Content -->
+      <div class="settings-content">
+        
+        <!-- TAB 1: DRIVE & BRAKE TUNING -->
+        <div id="tab-drive" class="tab-panel active">
+          <div class="controls-card">
+            <div>
+              <div class="control-row">
+                <span class="control-label">E-Brake Strength</span>
+                <span id="brake-amp-val" class="slider-val">25.0 A</span>
+              </div>
+              <div class="control-sub">Regenerative current limit during braking</div>
+            </div>
+
+            <div class="slider-wrap">
+              <input type="range" id="brake-slider" class="range-input" min="10" max="50" step="1" value="25" oninput="updateBrakeSlider(this.value)" onchange="sendBrakeAmps(this.value)" />
+            </div>
+
+            <div class="btn-action-row">
+              <button id="btn-brake-toggle" class="btn-secondary active-brake-btn" onclick="toggleBrakeEnable()">
+                <span id="btn-brake-icon">🛑</span> <span id="btn-brake-text">Brake: ENABLED</span>
+              </button>
+              <button class="btn-secondary" onclick="toggleKickStart()">
+                <span>🔄</span> <span id="btn-kick-text">Zero Start: ON</span>
+              </button>
+              <button class="btn-secondary" style="grid-column: span 2;" onclick="sendCmd('S')">
+                <span>📡</span> Query Scooter Status
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 2: GPS TRIP COMPUTER -->
+        <div id="tab-trip" class="tab-panel">
+          <div id="trip-card" class="trip-card">
+            <div class="trip-header">
+              <div class="trip-title-wrap">
+                <span class="trip-icon">📍</span>
+                <span class="trip-title">GPS Trip Computer</span>
+              </div>
+              <div id="gps-status-badge" class="gps-badge gps-idle">
+                <span class="gps-dot"></span>
+                <span id="gps-status-text">GPS Ready</span>
+              </div>
+            </div>
+
+            <div class="trip-main-display">
+              <div class="trip-dist-val-wrap">
+                <span id="trip-distance" class="trip-dist-num">0.00</span>
+                <span class="trip-dist-unit">KM</span>
+              </div>
+              <div class="trip-dist-sub" id="trip-distance-sub">0 m ridden</div>
+            </div>
+
+            <div class="trip-stats-grid">
+              <div class="trip-stat-box">
+                <span class="trip-stat-label">Duration</span>
+                <span id="trip-time" class="trip-stat-val">00:00:00</span>
+                <span class="trip-stat-sub">Ride Time</span>
+              </div>
+              <div class="trip-stat-box">
+                <span class="trip-stat-label">Avg Speed</span>
+                <span id="trip-avg-speed" class="trip-stat-val">0.0</span>
+                <span class="trip-stat-sub">km/h</span>
+              </div>
+              <div class="trip-stat-box">
+                <span class="trip-stat-label">Top Speed</span>
+                <span id="trip-max-speed" class="trip-stat-val">0.0</span>
+                <span class="trip-stat-sub">km/h</span>
+              </div>
+            </div>
+
+            <div class="trip-actions-wrap">
+              <button id="btn-trip-toggle" class="btn-trip-main btn-trip-start" onclick="toggleTripRecording()">
+                <span id="btn-trip-icon">▶</span> <span id="btn-trip-text">START TRIP</span>
+              </button>
+              <div class="trip-aux-buttons">
+                <button id="btn-trip-pause" class="btn-trip-aux" onclick="togglePauseTrip()" disabled title="Pause or resume trip">
+                  <span id="btn-pause-icon">⏸</span> <span id="btn-pause-text">Pause</span>
+                </button>
+                <button id="btn-trip-reset" class="btn-trip-aux" onclick="resetTripData()" title="Reset current trip metrics">
+                  <span>🔄</span> <span>Reset</span>
+                </button>
+              </div>
+            </div>
+
+            <div class="trip-footer">
+              <div class="trip-odo" onclick="promptResetOdometer()" title="Click to manage total odometer" style="cursor: pointer;">
+                <span class="trip-odo-label">ODO:</span>
+                <span id="disp-odo" class="trip-odo-val">0.00 km</span>
+              </div>
+              <div class="trip-wake-status" id="trip-wake-status" title="Screen Wake Lock">
+                <span>📱</span> <span id="wake-status-text">Wake Lock: Off</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- TAB 3: PROXIMITY KEY & SECURITY -->
+        <div id="tab-security" class="tab-panel">
+          <div class="controls-card garmin-card" id="garmin-card">
+            <!-- Live Status Banner -->
+            <div id="garmin-banner" class="garmin-banner disabled">
+              <div class="garmin-banner-icon" id="garmin-banner-icon">🛡️</div>
+              <div class="garmin-banner-info">
+                <div class="garmin-banner-title" id="garmin-banner-title">AUTO-LOCK DISABLED</div>
+                <div class="garmin-banner-sub" id="garmin-banner-sub">Enable to lock scooter when phone is away</div>
+              </div>
+            </div>
+
+            <!-- Live Signal & Proximity Radar -->
+            <div class="garmin-signal-box">
+              <div class="garmin-signal-header">
+                <span class="control-label">Phone Proximity</span>
+                <span id="disp-garmin-rssi" class="garmin-rssi-val">Disabled</span>
+              </div>
+              <div class="garmin-meter-wrap">
+                <div id="garmin-meter-bar" class="garmin-meter-bar" style="width: 0%;"></div>
+              </div>
+              <div class="garmin-device-info" id="garmin-device-info">Target: Kirill's iPhone / Apple / Auto</div>
+            </div>
+
+            <!-- Action Buttons -->
+            <div class="btn-action-row">
+              <button id="btn-garmin-toggle" class="btn-secondary" onclick="toggleGarminLock()">
+                <span id="btn-garmin-icon">🛡️</span> <span id="btn-garmin-text">Auto-Lock: OFF</span>
+              </button>
+              <button id="btn-garmin-learn" class="btn-secondary" onclick="pairIphone()">
+                <span>📱</span> <span>Pair iPhone</span>
+              </button>
+              <button id="btn-manual-unlock" class="btn-secondary" onclick="sendManualUnlock()">
+                <span>🔓</span> <span>Unlock</span>
+              </button>
+              <button id="btn-manual-lock" class="btn-secondary" onclick="sendManualLock()">
+                <span>🔒</span> <span>Force Lock</span>
+              </button>
+            </div>
+
+            <!-- Distance & Sensitivity Settings -->
+            <details class="garmin-details" open>
+              <summary>
+                <span>⚙️ Distance & Sensitivity</span>
+                <span style="font-size: 9px;">▼</span>
+              </summary>
+              <div class="garmin-settings-body">
+                <div class="control-row" style="margin-top: 6px;">
+                  <span class="control-label">Lock Distance (RSSI)</span>
+                  <span id="rssi-thold-val" class="slider-val">-85 dBm</span>
+                </div>
+                <div class="slider-wrap">
+                  <input type="range" id="rssi-slider" class="range-input" min="-100" max="-60" step="1" value="-85" oninput="updateRssiSlider(this.value)" onchange="sendRssiThreshold(this.value)" />
+                </div>
+                <div class="control-row" style="margin-top: 8px;">
+                  <span class="control-label">Lockout Timeout</span>
+                  <span id="timeout-val" class="slider-val">6 s</span>
+                </div>
+                <div class="slider-wrap">
+                  <input type="range" id="timeout-slider" class="range-input" min="3" max="20" step="1" value="6" oninput="updateTimeoutSlider(this.value)" onchange="sendTimeout(this.value)" />
+                </div>
+                <div class="garmin-mac-input-wrap" style="margin-top: 8px;">
+                  <input type="text" id="garmin-mac-input" class="console-input" placeholder="Phone Name (e.g. Kirill or iPhone)" />
+                  <button class="btn-secondary" style="padding: 4px 8px;" onclick="sendCustomName()">Set</button>
+                </div>
+              </div>
+            </details>
+          </div>
+        </div>
+
+        <!-- TAB 4: CONSOLE & DIAGNOSTICS -->
+        <div id="tab-console" class="tab-panel">
+          <div class="console-card">
+            <div class="control-row">
+              <span class="control-label">Serial Telemetry Stream</span>
+              <span style="font-size: 10px; color: var(--accent-emerald);">Live ESP32</span>
+            </div>
             <div id="console-output" class="console-log">Connecting will show live ESP32 lines...</div>
             <div class="console-input-row">
               <input type="text" id="custom-cmd" class="console-input" placeholder="e.g. S, P 3, BC 30, R" onkeydown="if(event.key==='Enter') sendCustomCmd()" />
-              <button class="btn-secondary" style="padding: 4px 10px;" onclick="sendCustomCmd()">Send</button>
+              <button class="btn-secondary" style="padding: 6px 12px;" onclick="sendCustomCmd()">Send</button>
+            </div>
+            <div class="quick-chips-row">
+              <button class="quick-chip" onclick="sendCmd('S')">S (Status)</button>
+              <button class="quick-chip" onclick="sendCmd('P 1')">P 1 (Eco)</button>
+              <button class="quick-chip" onclick="sendCmd('P 2')">P 2 (City)</button>
+              <button class="quick-chip" onclick="sendCmd('P 3')">P 3 (Drive)</button>
+              <button class="quick-chip" onclick="sendCmd('P 4')">P 4 (Sport)</button>
+              <button class="quick-chip" onclick="sendCmd('BC 30')">BC 30 (30A Brake)</button>
+              <button class="quick-chip" onclick="sendCmd('UNLOCK')">UNLOCK</button>
+              <button class="quick-chip" onclick="sendCmd('LOCK')">LOCK</button>
             </div>
           </div>
-        </details>
+        </div>
 
       </div>
 
     </div>
-
   </div>
 
   <!-- Toast Notification -->
@@ -1682,13 +1846,50 @@
 
     let wakeLockSentinel = null;
 
-    // Check Web Bluetooth support & Initialize Trip Computer
+    // Check Web Bluetooth support & Initialize
     window.addEventListener('DOMContentLoaded', () => {
       if (!navigator.bluetooth) {
         document.getElementById('ble-warning').style.display = 'block';
       }
       initTripComputer();
     });
+
+    // Keyboard shortcut to close settings
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        closeSettings();
+      }
+    });
+
+    // =========================================================================
+    // Settings Modal Functions
+    // =========================================================================
+    function openSettings() {
+      const modal = document.getElementById('settings-modal');
+      modal.classList.add('open');
+      if (navigator.vibrate) navigator.vibrate(15);
+    }
+
+    function closeSettings() {
+      const modal = document.getElementById('settings-modal');
+      modal.classList.remove('open');
+    }
+
+    function handleBackdropClick(e) {
+      if (e.target.id === 'settings-modal') {
+        closeSettings();
+      }
+    }
+
+    function switchSettingsTab(tabId) {
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+      });
+      document.querySelectorAll('.tab-panel').forEach(panel => {
+        panel.classList.toggle('active', panel.id === tabId);
+      });
+      if (navigator.vibrate) navigator.vibrate(10);
+    }
 
     // =========================================================================
     // Web Bluetooth Connection
@@ -1974,7 +2175,7 @@
           banner.className = 'garmin-banner disabled';
           bannerIcon.textContent = '🛡️';
           bannerTitle.textContent = 'AUTO-LOCK DISABLED';
-          bannerSub.textContent = 'Enable to lock scooter when iPhone is away';
+          bannerSub.textContent = 'Enable to lock scooter when phone is away';
         }
         return;
       }
@@ -2038,21 +2239,12 @@
     function updateGarminLockUI() {
       const btn = document.getElementById('btn-garmin-toggle');
       const text = document.getElementById('btn-garmin-text');
-      const statusTag = document.getElementById('garmin-status-tag');
       if (isGarminEnabled) {
         if (btn) btn.classList.add('active-brake-btn');
         if (text) text.textContent = "Auto-Lock: ON";
-        if (statusTag) {
-          statusTag.textContent = "📱 Key Armed";
-          statusTag.style.color = "var(--accent-emerald)";
-        }
       } else {
         if (btn) btn.classList.remove('active-brake-btn');
         if (text) text.textContent = "Auto-Lock: OFF";
-        if (statusTag) {
-          statusTag.textContent = "📱 Key Off";
-          statusTag.style.color = "var(--text-dim)";
-        }
       }
       updateLockBadgeUI(isScooterLocked);
       updateGarminSignalUI(currentGarminRssi);
@@ -2176,8 +2368,10 @@
 
     function logConsole(msg) {
       const log = document.getElementById('console-output');
-      log.textContent = (log.textContent.length > 2000 ? log.textContent.slice(-1500) : log.textContent) + "\n" + msg;
-      log.scrollTop = log.scrollHeight;
+      if (log) {
+        log.textContent = (log.textContent.length > 2500 ? log.textContent.slice(-1500) : log.textContent) + "\n" + msg;
+        log.scrollTop = log.scrollHeight;
+      }
     }
 
     function showToast(msg) {
