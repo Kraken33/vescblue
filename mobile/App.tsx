@@ -9,7 +9,6 @@ import {
   Platform,
   PermissionsAndroid,
   useWindowDimensions,
-  SafeAreaView,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
@@ -281,7 +280,7 @@ export default function App() {
   const strokeOffset = arcLength - ratio * arcLength;
 
   return (
-    <SafeAreaView style={styles.safeArea}>
+    <View style={[styles.safeArea, isLandscape && styles.safeAreaLandscape]}>
       <StatusBar style="light" />
 
       {/* Top Header */}
@@ -506,7 +505,7 @@ export default function App() {
           </View>
         </View>
       </ScrollView>
-    </SafeAreaView>
+    </View>
   );
 }
 
@@ -514,6 +513,11 @@ const styles = StyleSheet.create({
   safeArea: {
     flex: 1,
     backgroundColor: '#070a12',
+    paddingTop: Platform.OS === 'ios' ? 50 : 20,
+  },
+  safeAreaLandscape: {
+    paddingTop: Platform.OS === 'ios' ? 16 : 8,
+    paddingHorizontal: 12,
   },
   header: {
     flexDirection: 'row',
