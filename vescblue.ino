@@ -20,8 +20,8 @@ bool brakeActiveLow = true; // true = Active LOW (pulls to GND when brake engage
 bool brakeEnabled = true;   // Master software toggle to enable/disable e-brake sensor
 
 // Display UART (UART1) on GPIO 22 (RX) and GPIO 23 (TX) at 1200 Baud
-#define PIN_DISPLAY_RX 22
-#define PIN_DISPLAY_TX 23
+int displayRxPin = 22;
+int displayTxPin = 23;
 #define DISPLAY_BAUD 1200
 
 HardwareSerial DisplaySerial(1);
@@ -564,7 +564,7 @@ void processDisplayUart(float speedMps) {
     displayRxBytes++;
     unsigned long now = millis();
 
-    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 250) {
+    if (displayRxIndex > 0 && (now - lastDisplayRxByteTime) > 300) {
       displayRxIndex = 0;
     }
     lastDisplayRxByteTime = now;
@@ -573,15 +573,6 @@ void processDisplayUart(float speedMps) {
       if (b == 0x01) {
         displayRxBuffer[displayRxIndex++] = b;
       }
-    } else if (displayRxIndex == 1) {
-      if (b == 0x03) {
-        displayRxBuffer[displayRxIndex++] = b;
-      } else if (b == 0x01) {
-        displayRxBuffer[0] = 0x01;
-        displayRxIndex = 1;
-      } else {
-        displayRxIndex = 0;
-      }
     } else {
       displayRxBuffer[displayRxIndex++] = b;
       if (displayRxIndex >= 15) {
@@ -589,17 +580,32 @@ void processDisplayUart(float speedMps) {
         if (displayRxBuffer[14] == expectedCrc) {
           displayPacketsCount++;
           handleDisplayRxPacket(displayRxBuffer);
+          displayRxIndex = 0;
         } else {
           displayCrcFailures++;
+          // Shift buffer by 1 to search for next 0x01 header
+          int nextHeader = -1;
+          for (int i = 1; i < 15; i++) {
+            if (displayRxBuffer[i] == 0x01) {
+              nextHeader = i;
+              break;
+            }
+          }
+          if (nextHeader != -1) {
+            int remaining = 15 - nextHeader;
+            memmove(&displayRxBuffer[0], &displayRxBuffer[nextHeader], remaining);
+            displayRxIndex = remaining;
+          } else {
+            displayRxIndex = 0;
+          }
         }
-        displayRxIndex = 0;
       }
     }
   }
 
-  // Send packet to display every 150ms
+  // Send packet to display every 250ms (leaves ample RX bandwidth at 1200 baud)
   unsigned long now = millis();
-  if (now - lastDisplayTxTime >= 150) {
+  if (now - lastDisplayTxTime >= 250) {
     lastDisplayTxTime = now;
     sendDisplayTxPacket(speedMps);
   }
@@ -748,11 +754,13 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[250];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d KERPM=%.0f LOCK=%d GEN=%d GRSSI=%d",
+    char buf[280];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.1f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h DPKT=%lu DRX=%lu DERR=%lu DGEAR=%d DPIN=%d/%d PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d KERPM=%.0f LOCK=%d GEN=%d GRSSI=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              batteryVoltage, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
+             (unsigned long)displayPacketsCount, (unsigned long)displayRxBytes, (unsigned long)displayCrcFailures,
+             lastRawGear, displayRxPin, displayTxPin,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId,
              KICK_RPM_ERPM, isScooterLocked ? 1 : 0, garminLockEnabled ? 1 : 0, (millis() - lastGarminSeenMs < 10000) ? lastGarminRssi : -120);
     blePushLine(String(buf));
@@ -921,22 +929,28 @@ void bleHandleCommand(const String &cmd) {
     lastSentBrakeState = debouncedBrakeState;
     blePushLine(String("BRAKE pushed ") + (debouncedBrakeState ? "1" : "0"));
   } else if (cmd == "SWAP") {
-    static bool swapped = false;
-    swapped = !swapped;
+    int tmp = displayRxPin;
+    displayRxPin = displayTxPin;
+    displayTxPin = tmp;
+    prefs.putInt("disp_rx", displayRxPin);
+    prefs.putInt("disp_tx", displayTxPin);
     DisplaySerial.end();
-    if (swapped) {
-      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, 23, 22);
-      blePushLine("DISPLAY UART swapped: RX=GPIO 23, TX=GPIO 22");
-    } else {
-      DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, 22, 23);
-      blePushLine("DISPLAY UART default: RX=GPIO 22, TX=GPIO 23");
-    }
+    DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
+    displayRxIndex = 0;
+    blePushLine("DISPLAY UART swapped & saved: RX=GPIO " + String(displayRxPin) + ", TX=GPIO " + String(displayTxPin));
+  } else if (cmd == "DISP") {
+    char dbuf[160];
+    snprintf(dbuf, sizeof(dbuf), "DISP: RX_PIN=%d TX_PIN=%d PKTS=%lu BYTES=%lu CRC_FAIL=%lu RAW_G=%d CURR_G=%d S=%d",
+             displayRxPin, displayTxPin, (unsigned long)displayPacketsCount,
+             (unsigned long)displayRxBytes, (unsigned long)displayCrcFailures,
+             lastRawGear, currentGear, profileSSwitch ? 1 : 0);
+    blePushLine(String(dbuf));
   } else if (cmd == "R") {
     blePushLine("rebooting");
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin_lock | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk_en | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
+    blePushLine("S status | DISP disp_info | SWAP disp_pins | P [1-4] prof | G [1-4] gear | GEN [0/1] garmin | GMAC [mac] | GLEARN | UNLOCK | BEN [0/1] brk | BP [pin] | BC [amps] | CAN [id] | K [kick] | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -1027,17 +1041,16 @@ void bleInit() {
 }
 
 // =========================================================================
-// Setup & Loop
-// =========================================================================
 void setup() {
-  // Display is on UART1 (DisplaySerial) at 1200 Baud (RX=GPIO 22, TX=GPIO 23)
-  DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, PIN_DISPLAY_RX, PIN_DISPLAY_TX);
-
   pinMode(THROTTLE_PIN, INPUT);
   analogReadResolution(12);
   analogSetPinAttenuation(THROTTLE_PIN, ADC_11db);
 
   prefs.begin("scooter", false);
+  displayRxPin = prefs.getInt("disp_rx", 22);
+  displayTxPin = prefs.getInt("disp_tx", 23);
+  // Display is on UART1 (DisplaySerial) at 1200 Baud
+  DisplaySerial.begin(DISPLAY_BAUD, SERIAL_8N1, displayRxPin, displayTxPin);
   KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
   brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
