@@ -87,13 +87,17 @@ size_t bleOtaExpected = 0;
 size_t bleOtaReceived = 0;
 unsigned long lastBleNotify = 0;
 
-// Kick-start gate (0.0 = Zero-start enabled by default)
-float KICK_RPM_ERPM = 0.0f;
+// Kick-start configuration:
+// Gears 1, 2, 3: Kick start enabled by default (400 ERPM ~ 1.3 km/h)
+// Gear 4 (Sport): Zero start enabled by default (0 ERPM)
+const float DEFAULT_KICK_ERPM = 400.0f;
+float kickErpmThreshold = DEFAULT_KICK_ERPM;
+float KICK_RPM_ERPM = DEFAULT_KICK_ERPM;
 float vescRpm57 = 0.0f;
 float vehicleSpeedKmH = 0.0f;
 float vehicleSpeedMps = 0.0f;
 unsigned long lastVescPoll = 0;
-bool kickBlocked = false;
+bool kickBlocked = true;
 
 // Non-blocking VESC telemetry buffer
 uint8_t vescRxBuf[256];
@@ -132,6 +136,7 @@ int lastRawGear = 0;
 bool displayLightState = false;
 bool lastLightState = false;
 bool profileSSwitch = false;
+bool secretComboUnlocked = false;
 uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
 
 DriveProfile activeProfile = PROFILE_1;
@@ -358,6 +363,16 @@ void processVescIncoming() {
   }
 }
 
+void updateKickStartForGear() {
+  bool isZeroStart = (currentGear >= 4) || (currentGear == 3 && profileSSwitch);
+  if (isZeroStart) {
+    KICK_RPM_ERPM = 0.0f; // 4th gear (Sport): Zero start
+  } else {
+    KICK_RPM_ERPM = (kickErpmThreshold > 0.0f) ? kickErpmThreshold : DEFAULT_KICK_ERPM; // 1st, 2nd, 3rd gears: Kick start
+  }
+  kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
+}
+
 void updateActiveProfile() {
   if (currentGear == 1) {
     activeProfile = PROFILE_1;
@@ -368,6 +383,7 @@ void updateActiveProfile() {
   } else if (currentGear == 4) {
     activeProfile = PROFILE_S3;
   }
+  updateKickStartForGear();
   // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both VESCs
   sendVescTempProfile(activeProfile.maxErpm, 1.0f);
 }
@@ -382,14 +398,18 @@ void setGear(int newGear) {
   gearHistory[6] = (uint8_t)currentGear;
 
   if (currentGear == 1) {
+    secretComboUnlocked = false;
+    profileSSwitch = false;
+  } else if (!secretComboUnlocked && currentGear < 4) {
     profileSSwitch = false;
   }
 
   updateActiveProfile();
 
-  char gbuf[120];
-  snprintf(gbuf, sizeof(gbuf), "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A)",
-           currentGear, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps);
+  char gbuf[140];
+  snprintf(gbuf, sizeof(gbuf), "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A, %s)",
+           currentGear, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps,
+           (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
   blePushLine(String(gbuf));
 }
 
@@ -407,6 +427,11 @@ void handleDisplayRxPacket(const uint8_t *packet) {
     else if (rawGear == 20 || rawGear == 4) mappedGear = 4;
     else mappedGear = rawGear;
 
+    // Display hardware only shifts within 1..3; without secret combo, cannot select gear 4
+    if (!secretComboUnlocked && mappedGear > 3) {
+      mappedGear = 3;
+    }
+
     setGear(mappedGear);
     lastRawGear = rawGear;
   }
@@ -417,6 +442,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
 
     // Secret combo unlock check: [1, 2, 3, 2, 3, 2, 3] + Light ON
     if (light && (memcmp(gearHistory, COMBO_KEY, 7) == 0)) {
+      secretComboUnlocked = true;
       profileSSwitch = true;
       lastRawGear = 228; // Force re-evaluating active gear profile
       updateActiveProfile();
@@ -530,37 +556,25 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[220];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[240];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
+             (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
              digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
-      if (g == 1) {
-        currentGear = 1;
-        profileSSwitch = false;
-        activeProfile = PROFILE_1;
-      } else if (g == 2) {
-        currentGear = 2;
-        profileSSwitch = false;
-        activeProfile = PROFILE_2;
-      } else if (g == 3) {
-        currentGear = 3;
-        profileSSwitch = false;
-        activeProfile = PROFILE_3;
-      } else if (g == 4) {
-        currentGear = 3;
-        profileSSwitch = true;
-        activeProfile = PROFILE_S3;
-      }
-      sendVescTempProfile(activeProfile.maxErpm, 1.0f);
-      char pbuf[120];
-      snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A)",
-               g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps);
+      currentGear = g;
+      profileSSwitch = (g == 4);
+      secretComboUnlocked = (g == 4);
+      updateActiveProfile();
+      char pbuf[140];
+      snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s)",
+               g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps,
+               (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
       blePushLine(String(pbuf));
     } else {
       blePushLine("ERR profile 1..4 (1=10km/h, 2=15km/h, 3=25km/h, 4=40km/h)");
@@ -618,12 +632,15 @@ void bleHandleCommand(const String &cmd) {
   } else if (cmd.startsWith("K ")) {
     float k = cmd.substring(2).toFloat();
     if (k >= 0 && k < 5000) {
-      KICK_RPM_ERPM = k;
-      prefs.putFloat("kick_erpm", KICK_RPM_ERPM);
-      blePushLine("KICK " + String(KICK_RPM_ERPM, 0));
+      kickErpmThreshold = k;
+      prefs.putFloat("kick_th", kickErpmThreshold);
+      updateKickStartForGear();
+      blePushLine("KICK threshold set to " + String(kickErpmThreshold, 0) + " (Active: " + String(KICK_RPM_ERPM, 0) + ")");
     } else {
       blePushLine("ERR kick range 0..5000");
     }
+  } else if (cmd == "K") {
+    blePushLine("KICK Active: " + String(KICK_RPM_ERPM, 0) + " ERPM (" + ((KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start") + ", threshold=" + String(kickErpmThreshold, 0) + ")");
   } else if (cmd == "B") {
     sendBrakeFlagToSlave(debouncedBrakeState);
     lastSentBrakeState = debouncedBrakeState;
@@ -737,7 +754,10 @@ void setup() {
   analogSetPinAttenuation(THROTTLE_PIN, ADC_11db);
 
   prefs.begin("scooter", false);
-  KICK_RPM_ERPM = prefs.getFloat("kick_erpm", 0.0f); // Default 0 (Zero start)
+  kickErpmThreshold = prefs.getFloat("kick_th", DEFAULT_KICK_ERPM);
+  if (kickErpmThreshold < 0.0f) {
+    kickErpmThreshold = DEFAULT_KICK_ERPM;
+  }
   brakePin = prefs.getInt("brake_pin", 0);           // Default 0 = Dual pin (both 19 and 21)
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
   userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
@@ -827,7 +847,7 @@ void loop() {
     bool brakeJustReleased = (lastDebouncedBrakeState && !debouncedBrakeState);
     lastDebouncedBrakeState = debouncedBrakeState;
 
-    if (kickBlocked && !debouncedBrakeState) {
+    if (kickBlocked && !debouncedBrakeState && !testModeActive) {
       targetAmps = 0.0f;
       targetBrakeAmps = 0.0f;
       sendDualCurrent(0.0f, 0.0f);

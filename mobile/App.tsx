@@ -57,7 +57,6 @@ export default function App() {
   const [isBraking, setIsBraking] = useState(false);
   const [activeGear, setActiveGear] = useState(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
-  const [isZeroStart, setIsZeroStart] = useState(true);
 
   // Console State
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -65,7 +64,7 @@ export default function App() {
   const [customCmd, setCustomCmd] = useState('');
 
   const [isDemoMode, setIsDemoMode] = useState(false);
-  const demoIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const demoIntervalRef = useRef<any>(null);
 
   // Refs for subscriptions and active characteristic
   const charRef = useRef<Characteristic | null>(null);
@@ -104,7 +103,7 @@ export default function App() {
       } catch (_) {}
 
       // Wait up to 5 seconds for state to change to PoweredOn
-      let timeoutId: NodeJS.Timeout;
+      let timeoutId: any;
       const sub = mgr.onStateChange((state) => {
         if (state === 'PoweredOn') {
           clearTimeout(timeoutId);
@@ -311,7 +310,6 @@ export default function App() {
     const brkMatch = str.match(/BRK=(\d+)/);
     const ampMatch = str.match(/AMP=([\d.]+)/);
     const bcMatch = str.match(/BC=([\d.]+)A/);
-    const kickMatch = str.match(/KICK=(\w+)/);
 
     if (spdMatch) setSpeed(parseFloat(spdMatch[1]));
     if (vMatch) setVoltage(parseFloat(vMatch[1]).toFixed(1));
@@ -325,10 +323,6 @@ export default function App() {
       let s = sMatch ? parseInt(sMatch[1], 10) : 0;
       if (g === 3 && s === 1) g = 4;
       setActiveGear(g);
-    }
-
-    if (kickMatch) {
-      setIsZeroStart(kickMatch[1] !== 'HELD');
     }
   };
 
@@ -364,15 +358,6 @@ export default function App() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setActiveGear(gear);
     sendCmd(`P ${gear}`);
-  };
-
-  const toggleKick = () => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    if (isZeroStart) {
-      sendCmd('K 400');
-    } else {
-      sendCmd('K 0');
-    }
   };
 
   // Arc math: 180° semi-circle from (10, 50) to (90, 50), r=40
@@ -459,11 +444,6 @@ export default function App() {
                   {isBraking ? '🛑 BRAKING' : 'BRAKE OFF'}
                 </Text>
               </View>
-              <View style={[styles.badge, isZeroStart && styles.badgeKick]}>
-                <Text style={[styles.badgeText, isZeroStart && styles.badgeTextKick]}>
-                  {isZeroStart ? '⚡ ZERO START' : 'PUSH TO START'}
-                </Text>
-              </View>
             </View>
           </View>
 
@@ -545,13 +525,8 @@ export default function App() {
             />
 
             <View style={styles.btnRow}>
-              <TouchableOpacity style={styles.btnAction} onPress={toggleKick} activeOpacity={0.7}>
-                <Text style={styles.btnActionText}>
-                  {isZeroStart ? '🔄 Zero Start: ON' : '🔄 Push-to-Start: ON'}
-                </Text>
-              </TouchableOpacity>
               <TouchableOpacity style={styles.btnAction} onPress={() => sendCmd('S')} activeOpacity={0.7}>
-                <Text style={styles.btnActionText}>📡 Refresh (S)</Text>
+                <Text style={styles.btnActionText}>📡 Refresh Telemetry (S)</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -758,10 +733,6 @@ const styles = StyleSheet.create({
     backgroundColor: 'rgba(244, 63, 94, 0.2)',
     borderColor: 'rgba(244, 63, 94, 0.6)',
   },
-  badgeKick: {
-    backgroundColor: 'rgba(16, 185, 129, 0.16)',
-    borderColor: 'rgba(16, 185, 129, 0.45)',
-  },
   badgeText: {
     color: '#94a3b8',
     fontSize: 11,
@@ -769,9 +740,6 @@ const styles = StyleSheet.create({
   },
   badgeTextBraking: {
     color: '#f43f5e',
-  },
-  badgeTextKick: {
-    color: '#10b981',
   },
   telemGrid: {
     flexDirection: 'row',
