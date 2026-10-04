@@ -12,9 +12,10 @@
 // =========================================================================
 #define THROTTLE_PIN 34
 
-// Default Brake Pin & Dual-pin support (GPIO 19 and GPIO 21)
-int brakePin = 0; // 0 = Dual pin (both 19 and 21), or specify 19 or 21
+// Default Brake Pin (GPIO 19 single pin default)
+int brakePin = 19; // Default GPIO 19 (Single brake pin)
 bool brakeActiveLow = true; // true = Active LOW (pulls to GND when brake engaged)
+bool brakeEnabled = true;   // Master software toggle to enable/disable e-brake sensor
 
 // Display UART (UART1) on GPIO 22 (RX) and GPIO 23 (TX) at 1200 Baud
 #define PIN_DISPLAY_RX 22
@@ -57,14 +58,14 @@ const DriveProfile PROFILE_S3 = { 40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)" }
 
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f;           // Strong default brake current in Amps
-const float MIN_VARIABLE_BRAKE = 10.0f;// Min brake amps when throttling while braking
-const float MAX_VARIABLE_BRAKE = 35.0f;// Max brake amps when full throttle while braking
 
 // Throttle ADC calibration (Idle ~0.67V = 830 counts, Full ~3.0V = 3720 counts)
 const int THROTTLE_MIN_RAW = 950;  // Threshold above idle (~0.77V)
 const int THROTTLE_MAX_RAW = 3700; // Full throttle (~3.0V)
 
-const unsigned long BRAKE_DEBOUNCE_MS = 20;
+// Brake filter timing: 4ms sample period, 5 consecutive samples = 20ms debounce
+const unsigned long BRAKE_SAMPLE_INTERVAL_MS = 4;
+const int BRAKE_FILTER_SAMPLES = 5;
 
 HardwareSerial VescSerial(2);
 VescUart UART;
@@ -156,7 +157,9 @@ bool rawBrakePinState = false;
 bool debouncedBrakeState = false;
 bool lastDebouncedBrakeState = false;
 bool lastSentBrakeState = false;
-unsigned long lastBrakeStateChange = 0;
+unsigned long lastBrakeSampleTime = 0;
+int brakeFilterCount = 0;
+uint8_t brakeReleaseFrames = 0;
 
 float targetAmps = 0.0f;
 float targetBrakeAmps = 0.0f;
@@ -576,14 +579,14 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[250];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[255];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
              (gearShiftEnabled && bleClientConnected) ? 1 : 0,
-             digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
+             digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd == "GS" || cmd == "GSHIFT") {
     blePushLine("GSHIFT is " + String((gearShiftEnabled && bleClientConnected) ? "ON (Display: 1->G2, 2->G3, 3->G4)" : "OFF (Display: 1->G1, 2->G2, 3->G3)"));
@@ -597,6 +600,19 @@ void bleHandleCommand(const String &cmd) {
     }
     applyGearShiftState();
     blePushLine("GSHIFT set to " + String((gearShiftEnabled && bleClientConnected) ? "ON (Gears 2-4, G4 unlocked)" : "OFF (Gears 1-3, G4 locked)"));
+  } else if (cmd.startsWith("BEN ")) {
+    int en = cmd.substring(4).toInt();
+    brakeEnabled = (en != 0);
+    prefs.putBool("brake_en", brakeEnabled);
+    if (!brakeEnabled) {
+      debouncedBrakeState = false;
+      rawBrakePinState = false;
+      brakeFilterCount = 0;
+      sendBrakeFlagToSlave(false);
+      lastSentBrakeState = false;
+      sendDualCurrent(0.0f, 0.0f);
+    }
+    blePushLine("BRAKE SENSOR " + String(brakeEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
@@ -619,19 +635,28 @@ void bleHandleCommand(const String &cmd) {
       prefs.putInt("brake_pin", brakePin);
       if (brakePin > 0) {
         pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+        if (brakePin != 21) {
+          pinMode(21, INPUT_PULLDOWN);
+        }
         blePushLine("BRAKE PIN set to GPIO " + String(brakePin));
       } else {
+        pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+        pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
         blePushLine("BRAKE PIN set to DUAL (both GPIO 19 and 21)");
       }
     } else {
-      blePushLine("ERR valid pins: 0 (dual), 19, 21, 18, 5, 4");
+      blePushLine("ERR valid pins: 19 (default), 21, 0 (dual)");
     }
   } else if (cmd.startsWith("BPOL ")) {
     int pol = cmd.substring(5).toInt();
     brakeActiveLow = (pol != 0);
     prefs.putBool("brake_low", brakeActiveLow);
     pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    if (brakePin == 0 || brakePin == 21) {
+      pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    } else {
+      pinMode(21, INPUT_PULLDOWN);
+    }
     blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow ? "Active LOW (GND)" : "Active HIGH (3.3V)"));
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
@@ -694,7 +719,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -794,14 +819,28 @@ void setup() {
   if (kickErpmThreshold < 0.0f) {
     kickErpmThreshold = DEFAULT_KICK_ERPM;
   }
-  brakePin = prefs.getInt("brake_pin", 0);           // Default 0 = Dual pin (both 19 and 21)
+  gearShiftEnabled = prefs.getBool("gear_shift", true);
+  brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
+  if (brakePin == 0) {
+    // Migrate 0 to single GPIO 19 because GPIO 21 is floating/unconnected
+    brakePin = 19;
+    prefs.putInt("brake_pin", 19);
+  }
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
+  brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
   slaveCanId = prefs.getUChar("can_slave", 61);      // Default CAN ID 61
 
-  // Set internal pullup/pulldown on both candidate brake pins (19 and 21)
-  pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  // Set internal pullup/pulldown on configured brake pin
+  if (brakePin > 0) {
+    pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    if (brakePin != 21) {
+      pinMode(21, INPUT_PULLDOWN); // Pull down unused GPIO 21 to stop floating EMI
+    }
+  } else {
+    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+  }
 
   bleInit();
 
@@ -823,27 +862,46 @@ void loop() {
     requestVescTelemetryAsync();
   }
 
-  // 3. Fast Brake Sensor Reading (Supports dual pin 19 & 21 or single pin)
+  // 3. Fast Brake Sensor Reading & EMI Integrator Filter
   if (testModeActive) {
-    debouncedBrakeState = testBrakeState;
+    debouncedBrakeState = testBrakeState && brakeEnabled;
     currentRawThrottle = (int)((testVoltage / 3.3f) * 4095.0f);
   } else {
-    bool rawReading = false;
-    if (brakePin == 0) {
-      // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
-      bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
-      bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
-      rawReading = p19 || p21;
+    if (!brakeEnabled) {
+      debouncedBrakeState = false;
+      rawBrakePinState = false;
+      brakeFilterCount = 0;
     } else {
-      rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
-    }
+      if (now - lastBrakeSampleTime >= BRAKE_SAMPLE_INTERVAL_MS) {
+        lastBrakeSampleTime = now;
+        bool rawReading = false;
+        if (brakePin == 0) {
+          // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
+          bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
+          bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
+          rawReading = p19 || p21;
+        } else {
+          rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
+        }
+        rawBrakePinState = rawReading;
 
-    if (rawReading != rawBrakePinState) {
-      lastBrakeStateChange = now;
-      rawBrakePinState = rawReading;
-    }
-    if ((now - lastBrakeStateChange) > BRAKE_DEBOUNCE_MS) {
-      debouncedBrakeState = rawBrakePinState;
+        if (rawReading) {
+          if (brakeFilterCount < BRAKE_FILTER_SAMPLES) {
+            brakeFilterCount++;
+          }
+        } else {
+          if (brakeFilterCount > 0) {
+            brakeFilterCount--;
+          }
+        }
+
+        // Active after sustained continuous signal (BRAKE_FILTER_SAMPLES * 4ms = 20ms)
+        if (brakeFilterCount >= BRAKE_FILTER_SAMPLES) {
+          debouncedBrakeState = true;
+        } else if (brakeFilterCount == 0) {
+          debouncedBrakeState = false;
+        }
+      }
     }
 
     // Fast 4-sample ADC read (takes ~80 microseconds total)
@@ -883,27 +941,32 @@ void loop() {
     bool brakeJustReleased = (lastDebouncedBrakeState && !debouncedBrakeState);
     lastDebouncedBrakeState = debouncedBrakeState;
 
+    if (brakeJustReleased) {
+      brakeReleaseFrames = 2; // Cleanly clear brake mode on master and slave
+    }
+
     if (kickBlocked && !debouncedBrakeState && !testModeActive) {
       targetAmps = 0.0f;
       targetBrakeAmps = 0.0f;
       sendDualCurrent(0.0f, 0.0f);
     } else if (debouncedBrakeState) {
+      // Full brake priority: Throttle is completely deactivated
       targetAmps = 0.0f;
-
-      if (rawRatio <= 0.0f) {
+      if (userBrakeAmps > 0.0f) {
         targetBrakeAmps = userBrakeAmps;
+        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
       } else {
-        // Variable braking modulated by throttle (10A to 35A)
-        targetBrakeAmps = MIN_VARIABLE_BRAKE +
-                          (rawRatio * (MAX_VARIABLE_BRAKE - MIN_VARIABLE_BRAKE));
+        targetBrakeAmps = 0.0f;
+        sendDualCurrent(0.0f, 0.0f);
       }
-      sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
     } else {
       targetBrakeAmps = 0.0f;
 
-      if (brakeJustReleased) {
-        // Clear brake mode on VESC immediately upon release
-        sendDualBrakeCurrent(0.0f, 0.0f);
+      if (brakeReleaseFrames > 0) {
+        brakeReleaseFrames--;
+        targetAmps = 0.0f;
+        // Clean 0A current cancels VESC brake mode and enters freewheel/coast.
+        // Never send sendDualBrakeCurrent(0, 0) on release as that locks low-side FETs!
         sendDualCurrent(0.0f, 0.0f);
       } else if (rawRatio > 0.01f) {
         targetAmps = rawRatio * activeProfile.maxCurrentAmps;
@@ -919,9 +982,9 @@ void loop() {
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
     char buf[160];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s",
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, kickBlocked ? "HELD" : "ROLL");
     blePushLine(String(buf));
   }

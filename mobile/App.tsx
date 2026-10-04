@@ -56,6 +56,7 @@ export default function App() {
   const [targetAmps, setTargetAmps] = useState('0.0');
   const [throttleRaw, setThrottleRaw] = useState('--');
   const [isBraking, setIsBraking] = useState(false);
+  const [brakeEnabled, setBrakeEnabled] = useState(true);
   const [activeGear, setActiveGear] = useState(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
   const [gearShiftEnabled, setGearShiftEnabled] = useState(true);
@@ -313,6 +314,7 @@ export default function App() {
     const vMatch = str.match(/V=([\d.]+)/);
     const rawMatch = str.match(/RAW=(\d+)/);
     const brkMatch = str.match(/BRK=(\d+)/);
+    const benMatch = str.match(/BEN=(\d+)/);
     const ampMatch = str.match(/AMP=([\d.]+)/);
     const bcMatch = str.match(/BC=([\d.]+)A/);
     const gsMatch = str.match(/GS=(\d+)/);
@@ -322,6 +324,7 @@ export default function App() {
     if (ampMatch) setTargetAmps(parseFloat(ampMatch[1]).toFixed(1));
     if (rawMatch) setThrottleRaw(rawMatch[1]);
     if (brkMatch) setIsBraking(brkMatch[1] === '1');
+    if (benMatch) setBrakeEnabled(benMatch[1] === '1');
     if (bcMatch) setBrakeAmps(parseFloat(bcMatch[1]));
     if (gsMatch) setGearShiftEnabled(gsMatch[1] === '1');
 
@@ -345,6 +348,9 @@ export default function App() {
         const en = cmdStr.split(' ')[1] === '1';
         setGearShiftEnabled(en);
         if (en && activeGear === 1) setActiveGear(2);
+      } else if (cmdStr.startsWith('BEN ')) {
+        const en = cmdStr.split(' ')[1] === '1';
+        setBrakeEnabled(en);
       }
       return;
     }
@@ -372,6 +378,12 @@ export default function App() {
     if (val && activeGear === 1) {
       setActiveGear(2);
     }
+  };
+
+  const toggleBrakeSensor = (val: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setBrakeEnabled(val);
+    sendCmd(`BEN ${val ? 1 : 0}`);
   };
 
   const selectProfile = (gear: number) => {
@@ -464,9 +476,9 @@ export default function App() {
 
             {/* Badges */}
             <View style={styles.badgeRow}>
-              <View style={[styles.badge, isBraking && styles.badgeBraking]}>
+              <View style={[styles.badge, isBraking ? styles.badgeBraking : (!brakeEnabled ? styles.badgeDisabled : null)]}>
                 <Text style={[styles.badgeText, isBraking && styles.badgeTextBraking]}>
-                  {isBraking ? '🛑 BRAKING' : 'BRAKE OFF'}
+                  {!brakeEnabled ? '⚪ BRAKE SENSOR OFF' : isBraking ? '🛑 BRAKING' : 'BRAKE OFF'}
                 </Text>
               </View>
             </View>
@@ -596,6 +608,31 @@ export default function App() {
 
           {/* Tuning Card */}
           <View style={styles.controlsCard}>
+            <View style={styles.brakeSwitchRow}>
+              <View style={styles.brakeSwitchTextCol}>
+                <View style={styles.brakeSwitchTitleRow}>
+                  <Text style={styles.controlLabel}>E-Brake Sensor</Text>
+                  <View style={[styles.brakeBadge, brakeEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+                    <Text style={[styles.brakeBadgeText, brakeEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                      {brakeEnabled ? 'ACTIVE (GPIO 19)' : 'DISABLED'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.gearShiftDesc}>
+                  {brakeEnabled
+                    ? 'Physical brake lever active with 20ms glitch filter'
+                    : 'Brake sensor disabled in firmware (software bypass)'}
+                </Text>
+              </View>
+              <Switch
+                value={brakeEnabled}
+                onValueChange={toggleBrakeSensor}
+                trackColor={{ false: '#1e293b', true: '#f43f5e' }}
+                thumbColor={brakeEnabled ? '#ffffff' : '#64748b'}
+                ios_backgroundColor="#1e293b"
+              />
+            </View>
+
             <View style={styles.sliderHeader}>
               <Text style={styles.controlLabel}>E-Brake Strength</Text>
               <Text style={styles.sliderVal}>{brakeAmps.toFixed(1)} A</Text>
@@ -603,7 +640,7 @@ export default function App() {
 
             <Slider
               style={styles.slider}
-              minimumValue={10}
+              minimumValue={0}
               maximumValue={50}
               step={1}
               value={brakeAmps}
@@ -1004,7 +1041,55 @@ const styles = StyleSheet.create({
     borderColor: 'rgba(255, 255, 255, 0.08)',
     borderRadius: 18,
     padding: 12,
+    gap: 12,
+  },
+  brakeSwitchRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  brakeSwitchTextCol: {
+    flex: 1,
+    gap: 4,
+  },
+  brakeSwitchTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
     gap: 8,
+    flexWrap: 'wrap',
+  },
+  brakeBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  brakeBadgeOn: {
+    backgroundColor: 'rgba(244, 63, 94, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(244, 63, 94, 0.4)',
+  },
+  brakeBadgeOff: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  brakeBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  brakeBadgeTextOn: {
+    color: '#f43f5e',
+  },
+  brakeBadgeTextOff: {
+    color: '#94a3b8',
+  },
+  badgeDisabled: {
+    backgroundColor: 'rgba(100, 116, 139, 0.2)',
+    borderColor: 'rgba(100, 116, 139, 0.4)',
   },
   sliderHeader: {
     flexDirection: 'row',
