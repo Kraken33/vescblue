@@ -10,6 +10,7 @@ import {
   PermissionsAndroid,
   useWindowDimensions,
   NativeModules,
+  Switch,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
@@ -57,6 +58,7 @@ export default function App() {
   const [isBraking, setIsBraking] = useState(false);
   const [activeGear, setActiveGear] = useState(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
+  const [gearShiftEnabled, setGearShiftEnabled] = useState(true);
 
   // Console State
   const [consoleOpen, setConsoleOpen] = useState(false);
@@ -242,8 +244,11 @@ export default function App() {
               }
             });
 
-            // Initial query
-            setTimeout(() => sendCmd('S'), 300);
+            // Sync gear shift mode and query initial telemetry
+            setTimeout(() => {
+              sendCmd(gearShiftEnabled ? 'GS 1' : 'GS 0');
+              setTimeout(() => sendCmd('S'), 200);
+            }, 300);
           } catch (e: any) {
             console.warn('Connection failed:', e);
             setStatusText('Connect failed: ' + e.message);
@@ -310,6 +315,7 @@ export default function App() {
     const brkMatch = str.match(/BRK=(\d+)/);
     const ampMatch = str.match(/AMP=([\d.]+)/);
     const bcMatch = str.match(/BC=([\d.]+)A/);
+    const gsMatch = str.match(/GS=(\d+)/);
 
     if (spdMatch) setSpeed(parseFloat(spdMatch[1]));
     if (vMatch) setVoltage(parseFloat(vMatch[1]).toFixed(1));
@@ -317,6 +323,7 @@ export default function App() {
     if (rawMatch) setThrottleRaw(rawMatch[1]);
     if (brkMatch) setIsBraking(brkMatch[1] === '1');
     if (bcMatch) setBrakeAmps(parseFloat(bcMatch[1]));
+    if (gsMatch) setGearShiftEnabled(gsMatch[1] === '1');
 
     if (gearMatch) {
       let g = parseInt(gearMatch[1], 10);
@@ -334,6 +341,10 @@ export default function App() {
       if (cmdStr.startsWith('P ')) {
         const g = parseInt(cmdStr.split(' ')[1], 10);
         if (g >= 1 && g <= 4) setActiveGear(g);
+      } else if (cmdStr.startsWith('GS ')) {
+        const en = cmdStr.split(' ')[1] === '1';
+        setGearShiftEnabled(en);
+        if (en && activeGear === 1) setActiveGear(2);
       }
       return;
     }
@@ -354,7 +365,21 @@ export default function App() {
     }
   };
 
+  const toggleGearShift = (val: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setGearShiftEnabled(val);
+    sendCmd(`GS ${val ? 1 : 0}`);
+    if (val && activeGear === 1) {
+      setActiveGear(2);
+    }
+  };
+
   const selectProfile = (gear: number) => {
+    if (gearShiftEnabled && gear === 1) {
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      addConsole('[INFO] 1st Gear bypassed in Gear Shift mode (Gears 2–4 active)');
+      return;
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setActiveGear(gear);
     sendCmd(`P ${gear}`);
@@ -472,33 +497,98 @@ export default function App() {
           {/* Profile Selector */}
           <View style={styles.sectionHeader}>
             <Text style={styles.sectionTitle}>SPEED PROFILES</Text>
-            <Text style={styles.activeProfileLabel}>Gear {activeGear}</Text>
+            <Text style={styles.activeProfileLabel}>
+              Gear {activeGear} {gearShiftEnabled ? '(Shifted 2–4)' : '(Standard 1–3)'}
+            </Text>
+          </View>
+
+          {/* Gear Shift Mode Control Card */}
+          <View style={styles.gearShiftCard}>
+            <View style={styles.gearShiftRow}>
+              <View style={styles.gearShiftTextCol}>
+                <View style={styles.gearShiftTitleRow}>
+                  <Text style={styles.gearShiftTitle}>⚡ GEAR SHIFT MODE</Text>
+                  <View style={[styles.gearShiftBadge, gearShiftEnabled ? styles.gearShiftBadgeOn : styles.gearShiftBadgeOff]}>
+                    <Text style={[styles.gearShiftBadgeText, gearShiftEnabled ? styles.gearShiftBadgeTextOn : styles.gearShiftBadgeTextOff]}>
+                      {gearShiftEnabled ? 'GEARS 2–4 ACTIVE' : 'STANDARD 1–3'}
+                    </Text>
+                  </View>
+                </View>
+                <Text style={styles.gearShiftDesc}>
+                  {gearShiftEnabled
+                    ? 'Handlebar: 1→15 km/h, 2→25 km/h, 3→40+ km/h (G4 Unlocked). 1st gear omitted. Auto-locks on disconnect.'
+                    : 'Handlebar: 1→10 km/h, 2→15 km/h, 3→25 km/h. 4th gear secret locked.'}
+                </Text>
+              </View>
+              <Switch
+                value={gearShiftEnabled}
+                onValueChange={toggleGearShift}
+                trackColor={{ false: '#1e293b', true: '#00f2fe' }}
+                thumbColor={gearShiftEnabled ? '#ffffff' : '#64748b'}
+                ios_backgroundColor="#1e293b"
+              />
+            </View>
           </View>
 
           <View style={styles.profileGrid}>
             {[
-              { gear: 1, name: 'Eco Mode', limit: '10 km/h', amps: '25A Max', color: '#10b981' },
-              { gear: 2, name: 'City Cruising', limit: '15 km/h', amps: '40A Max', color: '#00f2fe' },
-              { gear: 3, name: 'Drive Legal', limit: '25 km/h', amps: '65A Max', color: '#f59e0b' },
-              { gear: 4, name: 'Sport Unlock', limit: '40+ km/h', amps: '120A Max', color: '#f43f5e' },
+              {
+                gear: 1,
+                name: 'Eco Mode',
+                limit: '10 km/h',
+                amps: '25A Max',
+                color: '#10b981',
+                handlebar: gearShiftEnabled ? 'Bypassed' : 'Disp 1',
+              },
+              {
+                gear: 2,
+                name: 'City Cruising',
+                limit: '15 km/h',
+                amps: '40A Max',
+                color: '#00f2fe',
+                handlebar: gearShiftEnabled ? 'Disp 1' : 'Disp 2',
+              },
+              {
+                gear: 3,
+                name: 'Drive Legal',
+                limit: '25 km/h',
+                amps: '65A Max',
+                color: '#f59e0b',
+                handlebar: gearShiftEnabled ? 'Disp 2' : 'Disp 3',
+              },
+              {
+                gear: 4,
+                name: 'Sport Unlock',
+                limit: '40+ km/h',
+                amps: '120A Max',
+                color: '#f43f5e',
+                handlebar: gearShiftEnabled ? 'Disp 3 (Unlocked)' : 'Secret Locked',
+              },
             ].map((p) => {
               const active = activeGear === p.gear;
+              const isBypassed = gearShiftEnabled && p.gear === 1;
               return (
                 <TouchableOpacity
                   key={p.gear}
                   style={[
                     styles.profileCard,
                     active && { borderColor: p.color, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
+                    isBypassed && styles.profileCardBypassed,
                   ]}
                   onPress={() => selectProfile(p.gear)}
-                  activeOpacity={0.7}
+                  activeOpacity={isBypassed ? 1 : 0.7}
                 >
                   <View style={styles.pHeader}>
                     <Text style={[styles.pGear, active && { color: p.color }]}>G{p.gear}</Text>
                     <Text style={styles.pLimit}>{p.limit}</Text>
                   </View>
                   <Text style={styles.pName}>{p.name}</Text>
-                  <Text style={styles.pAmps}>{p.amps}</Text>
+                  <View style={styles.pFooterRow}>
+                    <Text style={styles.pAmps}>{p.amps}</Text>
+                    <View style={[styles.handlebarBadge, isBypassed && styles.handlebarBadgeBypassed, active && { borderColor: p.color }]}>
+                      <Text style={[styles.handlebarBadgeText, active && { color: p.color }]}>{p.handlebar}</Text>
+                    </View>
+                  </View>
                 </TouchableOpacity>
               );
             })}
@@ -824,6 +914,89 @@ const styles = StyleSheet.create({
   pAmps: {
     color: '#94a3b8',
     fontSize: 10,
+  },
+  pFooterRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  profileCardBypassed: {
+    opacity: 0.45,
+    borderStyle: 'dashed',
+  },
+  handlebarBadge: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    borderRadius: 5,
+  },
+  handlebarBadgeBypassed: {
+    backgroundColor: 'rgba(244, 63, 94, 0.15)',
+  },
+  handlebarBadgeText: {
+    color: '#94a3b8',
+    fontSize: 9,
+    fontWeight: '700',
+  },
+  gearShiftCard: {
+    backgroundColor: '#101626',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderRadius: 18,
+    padding: 12,
+  },
+  gearShiftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 10,
+  },
+  gearShiftTextCol: {
+    flex: 1,
+    gap: 4,
+  },
+  gearShiftTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexWrap: 'wrap',
+  },
+  gearShiftTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  gearShiftBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 8,
+  },
+  gearShiftBadgeOn: {
+    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.4)',
+  },
+  gearShiftBadgeOff: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  gearShiftBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  gearShiftBadgeTextOn: {
+    color: '#00f2fe',
+  },
+  gearShiftBadgeTextOff: {
+    color: '#94a3b8',
+  },
+  gearShiftDesc: {
+    color: '#94a3b8',
+    fontSize: 11,
+    lineHeight: 15,
   },
   controlsCard: {
     backgroundColor: '#101626',

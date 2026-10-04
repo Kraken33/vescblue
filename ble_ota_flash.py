@@ -98,7 +98,11 @@ async def flash_firmware(bin_path):
 
         # 3. Send OTA:END
         print("Finalizing update: Sending OTA:END...")
-        await client.write_gatt_char(BLE_CONSOLE_UUID, b"OTA:END", response=True)
+        try:
+            await client.write_gatt_char(BLE_CONSOLE_UUID, b"OTA:END", response=True)
+        except Exception as e:
+            print(f"Device disconnected on reboot ({e})")
+            ota_done = True
 
         # Wait for reboot confirmation
         for _ in range(30):

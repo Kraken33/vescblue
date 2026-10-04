@@ -137,6 +137,7 @@ bool displayLightState = false;
 bool lastLightState = false;
 bool profileSSwitch = false;
 bool secretComboUnlocked = false;
+bool gearShiftEnabled = false;
 uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
 
 DriveProfile activeProfile = PROFILE_1;
@@ -364,7 +365,7 @@ void processVescIncoming() {
 }
 
 void updateKickStartForGear() {
-  bool isZeroStart = (currentGear >= 4) || (currentGear == 3 && profileSSwitch);
+  bool isZeroStart = (currentGear >= 4);
   if (isZeroStart) {
     KICK_RPM_ERPM = 0.0f; // 4th gear (Sport): Zero start
   } else {
@@ -377,10 +378,10 @@ void updateActiveProfile() {
   if (currentGear == 1) {
     activeProfile = PROFILE_1;
   } else if (currentGear == 2) {
-    activeProfile = profileSSwitch ? PROFILE_S2 : PROFILE_2;
+    activeProfile = PROFILE_2;
   } else if (currentGear == 3) {
-    activeProfile = profileSSwitch ? PROFILE_S3 : PROFILE_3;
-  } else if (currentGear == 4) {
+    activeProfile = PROFILE_3;
+  } else if (currentGear >= 4) {
     activeProfile = PROFILE_S3;
   }
   updateKickStartForGear();
@@ -397,11 +398,12 @@ void setGear(int newGear) {
   }
   gearHistory[6] = (uint8_t)currentGear;
 
-  if (currentGear == 1) {
+  if (currentGear < 4) {
+    // Leaving 4th gear (or operating in gears 1..3) immediately locks 4th gear / S-mode
     secretComboUnlocked = false;
     profileSSwitch = false;
-  } else if (!secretComboUnlocked && currentGear < 4) {
-    profileSSwitch = false;
+  } else {
+    profileSSwitch = true;
   }
 
   updateActiveProfile();
@@ -413,6 +415,37 @@ void setGear(int newGear) {
   blePushLine(String(gbuf));
 }
 
+int getDisplayGear(int raw) {
+  if (raw == 5 || raw == 1) return 1;
+  if (raw == 10 || raw == 2) return 2;
+  if (raw == 15 || raw == 3) return 3;
+  if (raw == 20 || raw == 4) return 4;
+  return constrain(raw, 1, 3);
+}
+
+int calculateMappedGear(int raw) {
+  int dispGear = getDisplayGear(raw);
+  if (bleClientConnected && gearShiftEnabled) {
+    // Gear shift mode: Display 1 -> Gear 2, Display 2 -> Gear 3, Display 3 -> Gear 4 (Sport, unlocked by default)
+    int shifted = dispGear + 1;
+    return constrain(shifted, 2, 4);
+  } else {
+    // Normal mode: Display 1 -> Gear 1, Display 2 -> Gear 2, Display 3 -> Gear 3
+    // Gear 4 locked unless secret combo unlocked
+    int g = constrain(dispGear, 1, 4);
+    if (!secretComboUnlocked && g > 3) {
+      g = 3;
+    }
+    return g;
+  }
+}
+
+void applyGearShiftState() {
+  int raw = (lastRawGear > 0) ? lastRawGear : 1;
+  int newGear = calculateMappedGear(raw);
+  setGear(newGear);
+}
+
 void handleDisplayRxPacket(const uint8_t *packet) {
   displayPacketsCount++;
   int rawGear = packet[4];
@@ -420,18 +453,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
 
   // Handle Gear change
   if (rawGear != lastRawGear) {
-    int mappedGear = 1;
-    if (rawGear == 5 || rawGear == 1) mappedGear = 1;
-    else if (rawGear == 10 || rawGear == 2) mappedGear = 2;
-    else if (rawGear == 15 || rawGear == 3) mappedGear = 3;
-    else if (rawGear == 20 || rawGear == 4) mappedGear = 4;
-    else mappedGear = rawGear;
-
-    // Display hardware only shifts within 1..3; without secret combo, cannot select gear 4
-    if (!secretComboUnlocked && mappedGear > 3) {
-      mappedGear = 3;
-    }
-
+    int mappedGear = calculateMappedGear(rawGear);
     setGear(mappedGear);
     lastRawGear = rawGear;
   }
@@ -443,9 +465,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
     // Secret combo unlock check: [1, 2, 3, 2, 3, 2, 3] + Light ON
     if (light && (memcmp(gearHistory, COMBO_KEY, 7) == 0)) {
       secretComboUnlocked = true;
-      profileSSwitch = true;
-      lastRawGear = 228; // Force re-evaluating active gear profile
-      updateActiveProfile();
+      setGear(4);
       blePushLine("SECRET UNLOCK: S-Mode (Sport 40+ km/h) activated!");
     }
 
@@ -556,21 +576,34 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[240];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[250];
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d PINS[19=%d 21=%d] BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
+             (gearShiftEnabled && bleClientConnected) ? 1 : 0,
              digitalRead(19), digitalRead(21), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
+  } else if (cmd == "GS" || cmd == "GSHIFT") {
+    blePushLine("GSHIFT is " + String((gearShiftEnabled && bleClientConnected) ? "ON (Display: 1->G2, 2->G3, 3->G4)" : "OFF (Display: 1->G1, 2->G2, 3->G3)"));
+  } else if (cmd.startsWith("GSHIFT ") || cmd.startsWith("GS ")) {
+    int val = 0;
+    if (cmd.startsWith("GSHIFT ")) val = cmd.substring(7).toInt();
+    else val = cmd.substring(3).toInt();
+    gearShiftEnabled = (val != 0);
+    if (!gearShiftEnabled) {
+      secretComboUnlocked = false;
+    }
+    applyGearShiftState();
+    blePushLine("GSHIFT set to " + String((gearShiftEnabled && bleClientConnected) ? "ON (Gears 2-4, G4 unlocked)" : "OFF (Gears 1-3, G4 locked)"));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
-      currentGear = g;
-      profileSSwitch = (g == 4);
-      secretComboUnlocked = (g == 4);
-      updateActiveProfile();
+      if (gearShiftEnabled && bleClientConnected && g == 1) {
+        g = 2; // In Gear Shift mode, there is no 1st gear
+      }
+      setGear(g);
       char pbuf[140];
       snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s)",
                g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps,
@@ -661,7 +694,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | BP [0/19/21] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -720,6 +753,9 @@ class ServerCallbacks : public BLEServerCallbacks {
   void onDisconnect(BLEServer *) {
     bleClientConnected = false;
     bleOtaActive = false;
+    gearShiftEnabled = false;
+    secretComboUnlocked = false;
+    applyGearShiftState();
     bleServer->getAdvertising()->start();
   }
 };
