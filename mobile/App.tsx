@@ -87,8 +87,51 @@ export default function App() {
     }
   };
 
+  // Helper to ensure Bluetooth hardware is in 'PoweredOn' state before scanning
+  const waitForBluetoothPoweredOn = (mgr: BleManager): Promise<{ ok: boolean; reason?: string }> => {
+    return new Promise(async (resolve) => {
+      try {
+        const state = await mgr.state();
+        if (state === 'PoweredOn') {
+          return resolve({ ok: true });
+        }
+        if (state === 'Unauthorized') {
+          return resolve({ ok: false, reason: 'Bluetooth permission denied in iOS Settings' });
+        }
+        if (state === 'PoweredOff') {
+          return resolve({ ok: false, reason: 'Bluetooth is turned OFF. Please enable it in Settings/Control Center' });
+        }
+      } catch (_) {}
+
+      // Wait up to 5 seconds for state to change to PoweredOn
+      let timeoutId: NodeJS.Timeout;
+      const sub = mgr.onStateChange((state) => {
+        if (state === 'PoweredOn') {
+          clearTimeout(timeoutId);
+          sub.remove();
+          resolve({ ok: true });
+        } else if (state === 'Unauthorized') {
+          clearTimeout(timeoutId);
+          sub.remove();
+          resolve({ ok: false, reason: 'Bluetooth permission denied' });
+        } else if (state === 'PoweredOff') {
+          clearTimeout(timeoutId);
+          sub.remove();
+          resolve({ ok: false, reason: 'Bluetooth is turned OFF' });
+        }
+      }, true);
+
+      timeoutId = setTimeout(() => {
+        sub.remove();
+        resolve({ ok: false, reason: 'Bluetooth initialization timed out' });
+      }, 5000);
+    });
+  };
+
   useEffect(() => {
     requestAndroidPermissions();
+    // Warm up BLE manager on app startup so it is PoweredOn when user taps Connect
+    getBleManager();
     return () => {
       disconnect();
       if (bleManager) {
@@ -134,10 +177,21 @@ export default function App() {
     }
     try {
       setIsScanning(true);
-      setStatusText('Scanning for Scooter-ESP32...');
-      addConsole('[BLE] Scanning...');
+      setStatusText('Checking Bluetooth state...');
+      addConsole('[BLE] Checking Bluetooth state...');
 
-      manager.startDeviceScan([BLE_SVC_UUID], null, async (error, scannedDevice) => {
+      const btStatus = await waitForBluetoothPoweredOn(manager);
+      if (!btStatus.ok) {
+        setStatusText(btStatus.reason || 'Bluetooth not ready');
+        addConsole(`[BLE] Error: ${btStatus.reason}`);
+        setIsScanning(false);
+        return;
+      }
+
+      setStatusText('Scanning for Scooter-ESP32...');
+      addConsole('[BLE] Scanning for Scooter-ESP32...');
+
+      manager.startDeviceScan(null, null, async (error, scannedDevice) => {
         if (error) {
           console.warn('Scan error:', error);
           setStatusText('Scan error: ' + error.message);
