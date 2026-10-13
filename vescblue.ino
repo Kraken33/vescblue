@@ -50,11 +50,13 @@ struct DriveProfile {
 };
 
 // ERPM = speedKmH / 0.003191858
-const DriveProfile PROFILE_1  = { 10.0f,  3133.0f,  25.0f, "10 km/h (Eco)" };
-const DriveProfile PROFILE_2  = { 15.0f,  4699.0f,  40.0f, "15 km/h (City)" };
-const DriveProfile PROFILE_3  = { 25.0f,  7832.0f,  65.0f, "25 km/h (Drive)" };
-const DriveProfile PROFILE_S2 = { 25.0f,  7832.0f,  65.0f, "25 km/h (Drive)" };
-const DriveProfile PROFILE_S3 = { 40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)" };
+const DriveProfile PROFILE_1          = { 10.0f,   3133.0f,  25.0f, "10 km/h (Eco)" };
+const DriveProfile PROFILE_2          = { 15.0f,   4699.0f,  40.0f, "15 km/h (City)" };
+const DriveProfile PROFILE_3_STANDARD = { 22.0f,   6892.0f,  65.0f, "22 km/h (Drive)" };
+const DriveProfile PROFILE_3_SHIFTED  = { 25.0f,   7832.0f,  65.0f, "25 km/h (Drive)" };
+const DriveProfile PROFILE_3          = { 22.0f,   6892.0f,  65.0f, "22 km/h (Drive)" };
+const DriveProfile PROFILE_S2         = { 25.0f,   7832.0f,  65.0f, "25 km/h (Drive)" };
+const DriveProfile PROFILE_S3         = { 40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)" };
 
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f;           // Strong default brake current in Amps
@@ -140,6 +142,13 @@ bool profileSSwitch = false;
 bool secretComboUnlocked = false;
 bool gearShiftEnabled = false;
 uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
+
+// Cruise Control State
+bool cruiseControlEnabled = false;
+bool cruiseControlActive = false;
+unsigned long cruiseTopSpeedStartTime = 0;
+const unsigned long CRUISE_HOLD_DURATION_MS = 5000;
+const float CRUISE_SPEED_TOLERANCE_KMH = 2.0f;
 
 DriveProfile activeProfile = PROFILE_1;
 
@@ -383,7 +392,7 @@ void updateActiveProfile() {
   } else if (currentGear == 2) {
     activeProfile = PROFILE_2;
   } else if (currentGear == 3) {
-    activeProfile = PROFILE_3;
+    activeProfile = (gearShiftEnabled && bleClientConnected) ? PROFILE_3_SHIFTED : PROFILE_3_STANDARD;
   } else if (currentGear >= 4) {
     activeProfile = PROFILE_S3;
   }
@@ -407,6 +416,12 @@ void setGear(int newGear) {
     profileSSwitch = false;
   } else {
     profileSSwitch = true;
+    // Cruise control forbidden in 4th gear (Sport): turn off immediately!
+    if (cruiseControlActive) {
+      cruiseControlActive = false;
+      cruiseTopSpeedStartTime = 0;
+      blePushLine("CRUISE: SUSPENDED (Gear 4)");
+    }
   }
 
   updateActiveProfile();
@@ -579,13 +594,14 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[255];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    char buf[280];
+    const char *ccStatus = !cruiseControlEnabled ? "0" : (currentGear >= 4 ? "G4" : (cruiseControlActive ? "ACTIVE" : "1"));
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
              targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
-             (gearShiftEnabled && bleClientConnected) ? 1 : 0,
+             (gearShiftEnabled && bleClientConnected) ? 1 : 0, ccStatus,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd == "GS" || cmd == "GSHIFT") {
@@ -595,11 +611,27 @@ void bleHandleCommand(const String &cmd) {
     if (cmd.startsWith("GSHIFT ")) val = cmd.substring(7).toInt();
     else val = cmd.substring(3).toInt();
     gearShiftEnabled = (val != 0);
+    prefs.putBool("gear_shift", gearShiftEnabled);
     if (!gearShiftEnabled) {
       secretComboUnlocked = false;
     }
     applyGearShiftState();
     blePushLine("GSHIFT set to " + String((gearShiftEnabled && bleClientConnected) ? "ON (Gears 2-4, G4 unlocked)" : "OFF (Gears 1-3, G4 locked)"));
+  } else if (cmd == "CC" || cmd == "CRUISE") {
+    const char *stateStr = !cruiseControlEnabled ? "DISABLED" : (currentGear >= 4 ? "SUSPENDED (G4)" : (cruiseControlActive ? "ENGAGED" : "ARMED"));
+    blePushLine("CRUISE is " + String(stateStr));
+  } else if (cmd.startsWith("CC ") || cmd.startsWith("CRUISE ")) {
+    int val = 0;
+    if (cmd.startsWith("CC ")) val = cmd.substring(3).toInt();
+    else val = cmd.substring(7).toInt();
+    cruiseControlEnabled = (val != 0);
+    prefs.putBool("cruise_en", cruiseControlEnabled);
+    if (!cruiseControlEnabled) {
+      cruiseControlActive = false;
+      cruiseTopSpeedStartTime = 0;
+    }
+    const char *stateStr = !cruiseControlEnabled ? "DISABLED" : (currentGear >= 4 ? "ARMED (Suspended in G4)" : "ARMED");
+    blePushLine("CRUISE set to " + String(stateStr));
   } else if (cmd.startsWith("BEN ")) {
     int en = cmd.substring(4).toInt();
     brakeEnabled = (en != 0);
@@ -719,7 +751,7 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] cruise | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -780,6 +812,10 @@ class ServerCallbacks : public BLEServerCallbacks {
     bleOtaActive = false;
     gearShiftEnabled = false;
     secretComboUnlocked = false;
+    if (cruiseControlActive) {
+      cruiseControlActive = false;
+      cruiseTopSpeedStartTime = 0;
+    }
     applyGearShiftState();
     bleServer->getAdvertising()->start();
   }
@@ -820,6 +856,7 @@ void setup() {
     kickErpmThreshold = DEFAULT_KICK_ERPM;
   }
   gearShiftEnabled = prefs.getBool("gear_shift", true);
+  cruiseControlEnabled = prefs.getBool("cruise_en", false);
   brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
   if (brakePin == 0) {
     // Migrate 0 to single GPIO 19 because GPIO 21 is floating/unconnected
@@ -933,6 +970,31 @@ void loop() {
     rawRatio = 0.0f; // Instant cutoff when below deadband!
   }
 
+  // 6b. Top-Speed Cruise Control Detection
+  // Activates only in Gears 1-3 when cruise is armed, brake is released, and kick is passed.
+  // Requires holding speed within +/- 2.0 km/h of profile top speed continuously for 5.0 seconds.
+  if (cruiseControlEnabled && currentGear < 4 && !debouncedBrakeState && !kickBlocked && !testModeActive) {
+    float minCruiseSpeed = activeProfile.speedLimitKmH - CRUISE_SPEED_TOLERANCE_KMH;
+    float maxCruiseSpeed = activeProfile.speedLimitKmH + CRUISE_SPEED_TOLERANCE_KMH;
+
+    if (vehicleSpeedKmH >= minCruiseSpeed && vehicleSpeedKmH <= maxCruiseSpeed) {
+      if (cruiseTopSpeedStartTime == 0) {
+        cruiseTopSpeedStartTime = now;
+      } else if (!cruiseControlActive && (now - cruiseTopSpeedStartTime >= CRUISE_HOLD_DURATION_MS)) {
+        cruiseControlActive = true;
+        blePushLine("CRUISE: ENGAGED at " + String(vehicleSpeedKmH, 1) + " km/h");
+      }
+    } else {
+      if (!cruiseControlActive) {
+        cruiseTopSpeedStartTime = 0;
+      }
+    }
+  } else {
+    if (!cruiseControlActive) {
+      cruiseTopSpeedStartTime = 0;
+    }
+  }
+
   // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & full authority braking
   if (now - lastMotorCmdTime >= 20) {
     lastMotorCmdTime = now;
@@ -945,12 +1007,13 @@ void loop() {
       brakeReleaseFrames = 2; // Cleanly clear brake mode on master and slave
     }
 
-    if (kickBlocked && !debouncedBrakeState && !testModeActive) {
-      targetAmps = 0.0f;
-      targetBrakeAmps = 0.0f;
-      sendDualCurrent(0.0f, 0.0f);
-    } else if (debouncedBrakeState) {
-      // Full brake priority: Throttle is completely deactivated
+    if (debouncedBrakeState) {
+      // Full brake priority: Throttle is completely deactivated and cruise control cancels!
+      if (cruiseControlActive) {
+        cruiseControlActive = false;
+        cruiseTopSpeedStartTime = 0;
+        blePushLine("CRUISE: DISENGAGED (Brake)");
+      }
       targetAmps = 0.0f;
       if (userBrakeAmps > 0.0f) {
         targetBrakeAmps = userBrakeAmps;
@@ -959,6 +1022,14 @@ void loop() {
         targetBrakeAmps = 0.0f;
         sendDualCurrent(0.0f, 0.0f);
       }
+    } else if (kickBlocked && !debouncedBrakeState && !testModeActive) {
+      if (cruiseControlActive) {
+        cruiseControlActive = false;
+        cruiseTopSpeedStartTime = 0;
+      }
+      targetAmps = 0.0f;
+      targetBrakeAmps = 0.0f;
+      sendDualCurrent(0.0f, 0.0f);
     } else {
       targetBrakeAmps = 0.0f;
 
@@ -968,6 +1039,11 @@ void loop() {
         // Clean 0A current cancels VESC brake mode and enters freewheel/coast.
         // Never send sendDualBrakeCurrent(0, 0) on release as that locks low-side FETs!
         sendDualCurrent(0.0f, 0.0f);
+      } else if (cruiseControlActive && currentGear < 4) {
+        // Cruise Control Active: Physical throttle is ignored, send maximum current for current gear!
+        // VESC native speed limiter profile limits motor RPM cleanly at the gear's top speed.
+        targetAmps = activeProfile.maxCurrentAmps;
+        sendDualCurrent(targetAmps, targetAmps);
       } else if (rawRatio > 0.01f) {
         targetAmps = rawRatio * activeProfile.maxCurrentAmps;
         sendDualCurrent(targetAmps, targetAmps);
@@ -981,11 +1057,12 @@ void loop() {
   // 8. BLE notify live line at 5 Hz
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[160];
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s",
+    char buf[180];
+    const char *ccStatus = !cruiseControlEnabled ? "0" : (currentGear >= 4 ? "G4" : (cruiseControlActive ? "ACTIVE" : "1"));
+    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL");
+             targetAmps, kickBlocked ? "HELD" : "ROLL", ccStatus);
     blePushLine(String(buf));
   }
 

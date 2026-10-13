@@ -5,7 +5,7 @@
   "dependencies": {
     "@react-native-community/slider": "5.2.0",
     "buffer": "^6.0.3",
-    "expo": "~57.0.26",
+    "expo": "~57.0.28",
     "expo-haptics": "~57.0.3",
     "expo-keep-awake": "~57.0.2",
     "expo-status-bar": "~57.0.1",
