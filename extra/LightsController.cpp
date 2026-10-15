@@ -133,8 +133,8 @@ void LightsController::handleWebClient() {
 }
 
 void LightsController::update(bool brakePressed) {
-    // 1. Brake Light Output
-    digitalWrite(PIN_OUT_BRAKE, brakePressed ? HIGH : LOW);
+    // 1. Back Light Output (Solid ON when front light is ON or brake is engaged)
+    digitalWrite(PIN_OUT_BRAKE, (brakePressed || frontLightOn) ? HIGH : LOW);
 
     // 2. Physical Front Light Switch Debounce
     bool lightReading = digitalRead(PIN_IN_LIGHT);

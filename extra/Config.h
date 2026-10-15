@@ -26,16 +26,17 @@
 #define THROTTLE_FAULT_HIGH 4050// Short circuit fault above this
 
 // --- Physical Inputs (Active LOW with internal pull-ups) ---
-#define PIN_IN_BRAKE   21  // Brake sensor (pulls to GND when brake engaged)
+#define PIN_IN_BRAKE   19  // Brake sensor (pulls to GND when brake engaged)
 #define PIN_IN_TURN_L  18  // Left turn switch (pulls to GND)
-#define PIN_IN_TURN_R  19  // Right turn switch (pulls to GND)
-#define PIN_IN_LIGHT   5   // Physical light switch (optional)
+#define PIN_IN_TURN_R  21  // Right turn switch (pulls to GND)
+#define PIN_IN_LIGHT   5   // Physical light switch (pulls to GND)
+#define PIN_IN_DDM     4   // DDM switch (reserved)
 
 // --- Outputs to ABE Box / Relays / Transistors ---
-#define PIN_OUT_BRAKE  2   // Brake light output (High = ON)
+#define PIN_OUT_BRAKE  26  // Back light output (Tail + Brake, High = ON)
 #define PIN_OUT_LIGHT  25  // Front light output (High = ON)
-#define PIN_OUT_TURN_L 26  // Left turn signal output
-#define PIN_OUT_TURN_R 4   // Right turn signal output
+#define PIN_OUT_TURN_L 14  // Left turn signal output (High = ON)
+#define PIN_OUT_TURN_R 27  // Right turn signal output (High = ON)
 
 // ============================================================================
 //                             VESC & MOTOR SETTINGS

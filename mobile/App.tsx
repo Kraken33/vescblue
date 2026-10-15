@@ -15,6 +15,7 @@ import {
   AppStateStatus,
   Linking,
   Alert,
+  Animated,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
@@ -91,6 +92,39 @@ export default function App() {
   const [cruiseStatus, setCruiseStatus] = useState<'OFF' | 'ARMED' | 'ACTIVE' | 'G4'>('OFF');
   const [landscapeTab, setLandscapeTab] = useState<'drive' | 'settings'>('drive');
   const pagerRef = useRef<ScrollView | null>(null);
+
+  // Lights & Indicators State
+  const [frontLightOn, setFrontLightOn] = useState(false);
+  const [turnLeftOn, setTurnLeftOn] = useState(false);
+  const [turnRightOn, setTurnRightOn] = useState(false);
+  const [ddmActive, setDdmActive] = useState(false);
+  const blinkAnim = useRef(new Animated.Value(1)).current;
+
+  useEffect(() => {
+    if (turnLeftOn || turnRightOn) {
+      const loop = Animated.loop(
+        Animated.sequence([
+          Animated.timing(blinkAnim, {
+            toValue: 0.2,
+            duration: 380,
+            useNativeDriver: true,
+          }),
+          Animated.timing(blinkAnim, {
+            toValue: 1,
+            duration: 380,
+            useNativeDriver: true,
+          }),
+        ])
+      );
+      loop.start();
+      return () => {
+        loop.stop();
+        blinkAnim.setValue(1);
+      };
+    } else {
+      blinkAnim.setValue(1);
+    }
+  }, [turnLeftOn, turnRightOn]);
 
   const switchLandscapePage = (page: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -899,6 +933,10 @@ export default function App() {
     const bcMatch = str.match(/BC=([\d.]+)A/);
     const gsMatch = str.match(/GS=(\d+)/);
     const ccMatch = str.match(/CC=([A-Za-z0-9_]+)/);
+    const lMatch = str.match(/\bL=(\d+)/);
+    const tlMatch = str.match(/\bTL=(\d+)/);
+    const trMatch = str.match(/\bTR=(\d+)/);
+    const ddmMatch = str.match(/\bDDM=(\d+)/);
 
     if (spdMatch) setSpeed(parseFloat(spdMatch[1]));
     if (vMatch) setVoltage(parseFloat(vMatch[1]).toFixed(1));
@@ -908,6 +946,27 @@ export default function App() {
     if (benMatch) setBrakeEnabled(benMatch[1] === '1');
     if (bcMatch) setBrakeAmps(parseFloat(bcMatch[1]));
     if (gsMatch) setGearShiftEnabled(gsMatch[1] === '1');
+    if (lMatch) setFrontLightOn(lMatch[1] === '1');
+    if (tlMatch) setTurnLeftOn(tlMatch[1] === '1');
+    if (trMatch) setTurnRightOn(trMatch[1] === '1');
+    if (ddmMatch) setDdmActive(ddmMatch[1] === '1');
+
+    if (str.includes('LIGHT: ON')) setFrontLightOn(true);
+    else if (str.includes('LIGHT: OFF')) setFrontLightOn(false);
+
+    if (str.includes('TURN LEFT: ON')) setTurnLeftOn(true);
+    else if (str.includes('TURN LEFT: OFF')) setTurnLeftOn(false);
+
+    if (str.includes('TURN RIGHT: ON')) setTurnRightOn(true);
+    else if (str.includes('TURN RIGHT: OFF')) setTurnRightOn(false);
+
+    if (str.includes('HAZARD: ON')) {
+      setTurnLeftOn(true);
+      setTurnRightOn(true);
+    } else if (str.includes('HAZARD: OFF')) {
+      setTurnLeftOn(false);
+      setTurnRightOn(false);
+    }
 
     if (ccMatch) {
       const ccVal = ccMatch[1];
@@ -974,6 +1033,20 @@ export default function App() {
         } else {
           setCruiseStatus(activeGear >= 4 ? 'G4' : 'ARMED');
         }
+      } else if (cmdStr === 'L' || cmdStr === 'LIGHT') {
+        setFrontLightOn((prev) => !prev);
+      } else if (cmdStr.startsWith('L ') || cmdStr.startsWith('LIGHT ')) {
+        const val = cmdStr.split(' ')[1] === '1';
+        setFrontLightOn(val);
+      } else if (cmdStr === 'TL' || cmdStr === 'TURNL') {
+        setTurnLeftOn((prev) => !prev);
+        setTurnRightOn(false);
+      } else if (cmdStr === 'TR' || cmdStr === 'TURNR') {
+        setTurnRightOn((prev) => !prev);
+        setTurnLeftOn(false);
+      } else if (cmdStr === 'HAZ' || cmdStr === 'HAZARD') {
+        setTurnLeftOn((prev) => !prev);
+        setTurnRightOn((prev) => !prev);
       }
       return;
     }
@@ -1708,6 +1781,364 @@ export default function App() {
     </View>
   );
 
+  const renderLightsBarLandscape = () => (
+    <View style={styles.landscapeLightsBar}>
+      {/* Left indicator */}
+      <TouchableOpacity
+        style={[styles.miniLightPill, turnLeftOn && styles.miniLightPillAmber]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          sendCmd('TL');
+        }}
+        activeOpacity={0.7}
+      >
+        <Animated.View style={{ opacity: turnLeftOn ? blinkAnim : 1 }}>
+          <Text style={[styles.miniLightIcon, turnLeftOn && styles.miniLightIconAmber]}>⬅️</Text>
+        </Animated.View>
+        <Text style={[styles.miniLightText, turnLeftOn && styles.miniLightTextAmber]}>LEFT</Text>
+      </TouchableOpacity>
+
+      {/* Front Light */}
+      <TouchableOpacity
+        style={[styles.miniLightPill, frontLightOn && styles.miniLightPillCyan]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          sendCmd('L');
+        }}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.miniLightIcon}>💡</Text>
+        <Text style={[styles.miniLightText, frontLightOn && styles.miniLightTextCyan]}>FRONT</Text>
+      </TouchableOpacity>
+
+      {/* Rear Light */}
+      <View style={[styles.miniLightPill, (frontLightOn || isBraking) && styles.miniLightPillRed]}>
+        <Text style={styles.miniLightIcon}>🚨</Text>
+        <Text style={[styles.miniLightText, (frontLightOn || isBraking) && styles.miniLightTextRed]}>
+          {isBraking ? 'BRAKE' : frontLightOn ? 'TAIL' : 'REAR'}
+        </Text>
+      </View>
+
+      {/* Right indicator */}
+      <TouchableOpacity
+        style={[styles.miniLightPill, turnRightOn && styles.miniLightPillAmber]}
+        onPress={() => {
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          sendCmd('TR');
+        }}
+        activeOpacity={0.7}
+      >
+        <Text style={[styles.miniLightText, turnRightOn && styles.miniLightTextAmber]}>RIGHT</Text>
+        <Animated.View style={{ opacity: turnRightOn ? blinkAnim : 1 }}>
+          <Text style={[styles.miniLightIcon, turnRightOn && styles.miniLightIconAmber]}>➡️</Text>
+        </Animated.View>
+      </TouchableOpacity>
+
+      {/* DDM badge */}
+      <View style={[styles.miniLightPill, ddmActive && styles.miniLightPillCyan]}>
+        <Text style={styles.miniLightIcon}>⚡</Text>
+        <Text style={[styles.miniLightText, ddmActive && styles.miniLightTextCyan]}>
+          {ddmActive ? 'DUAL' : 'SINGLE'}
+        </Text>
+      </View>
+    </View>
+  );
+
+  const renderLightsCard = () => {
+    const isHazard = turnLeftOn && turnRightOn;
+
+    return (
+      <View style={styles.lightsCard}>
+        {/* Card Header */}
+        <View style={styles.lightsHeaderRow}>
+          <View style={styles.lightsHeaderLeft}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <Text style={styles.lightsTitle}>💡 LIGHTS & INDICATORS</Text>
+              <View
+                style={[
+                  styles.lightsStatusBadge,
+                  isHazard
+                    ? styles.lightsBadgeHazard
+                    : (turnLeftOn || turnRightOn)
+                    ? styles.lightsBadgeBlinking
+                    : frontLightOn
+                    ? styles.lightsBadgeOn
+                    : styles.lightsBadgeOff,
+                ]}
+              >
+                <Text
+                  style={[
+                    styles.lightsStatusBadgeText,
+                    isHazard
+                      ? styles.lightsBadgeTextHazard
+                      : (turnLeftOn || turnRightOn)
+                      ? styles.lightsBadgeTextBlinking
+                      : frontLightOn
+                      ? styles.lightsBadgeTextOn
+                      : styles.lightsBadgeTextOff,
+                  ]}
+                >
+                  {isHazard
+                    ? '⚠️ HAZARD'
+                    : turnLeftOn
+                    ? '⬅️ BLINKING L'
+                    : turnRightOn
+                    ? 'BLINKING R ➡️'
+                    : frontLightOn
+                    ? 'LIGHTS ON'
+                    : isBraking
+                    ? '🛑 BRAKE'
+                    : 'STANDBY'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.lightsSubDesc}>
+              Hardware MOSFET/relay outputs synchronized with handlebar switches
+            </Text>
+          </View>
+        </View>
+
+        {/* Primary Lights 2-Column Grid */}
+        <View style={styles.lightsGrid}>
+          {/* Front Light Tile */}
+          <TouchableOpacity
+            style={[
+              styles.lightTile,
+              frontLightOn ? styles.lightTileFrontActive : styles.lightTileInactive,
+            ]}
+            onPress={() => {
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+              sendCmd('L');
+            }}
+            activeOpacity={0.7}
+          >
+            <View style={styles.lightTileTopRow}>
+              <View
+                style={[
+                  styles.lightTileIconWrap,
+                  frontLightOn && styles.lightTileIconWrapFrontOn,
+                ]}
+              >
+                <Text style={styles.lightTileIcon}>💡</Text>
+              </View>
+              <View
+                style={[
+                  styles.lightPill,
+                  frontLightOn ? styles.lightPillFrontOn : styles.lightPillOff,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.lightDot,
+                    frontLightOn ? styles.lightDotFrontOn : styles.lightDotOff,
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.lightPillText,
+                    frontLightOn ? styles.lightPillTextFrontOn : styles.lightPillTextOff,
+                  ]}
+                >
+                  {frontLightOn ? 'ON' : 'OFF'}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.lightTileName}>Front Headlight</Text>
+            <Text style={styles.lightTilePin}>GPIO 25 OUT • Switch D5</Text>
+          </TouchableOpacity>
+
+          {/* Rear / Brake Light Tile */}
+          <View
+            style={[
+              styles.lightTile,
+              isBraking
+                ? styles.lightTileBrakeActive
+                : frontLightOn
+                ? styles.lightTileTailActive
+                : styles.lightTileInactive,
+            ]}
+          >
+            <View style={styles.lightTileTopRow}>
+              <View
+                style={[
+                  styles.lightTileIconWrap,
+                  isBraking
+                    ? styles.lightTileIconWrapBrake
+                    : frontLightOn
+                    ? styles.lightTileIconWrapTail
+                    : null,
+                ]}
+              >
+                <Text style={styles.lightTileIcon}>🚨</Text>
+              </View>
+              <View
+                style={[
+                  styles.lightPill,
+                  isBraking
+                    ? styles.lightPillBrakeOn
+                    : frontLightOn
+                    ? styles.lightPillTailOn
+                    : styles.lightPillOff,
+                ]}
+              >
+                <View
+                  style={[
+                    styles.lightDot,
+                    isBraking
+                      ? styles.lightDotBrakeOn
+                      : frontLightOn
+                      ? styles.lightDotTailOn
+                      : styles.lightDotOff,
+                  ]}
+                />
+                <Text
+                  style={[
+                    styles.lightPillText,
+                    isBraking
+                      ? styles.lightPillTextBrakeOn
+                      : frontLightOn
+                      ? styles.lightPillTextTailOn
+                      : styles.lightPillTextOff,
+                  ]}
+                >
+                  {isBraking ? 'BRAKE' : frontLightOn ? 'TAIL' : 'OFF'}
+                </Text>
+              </View>
+            </View>
+
+            <Text style={styles.lightTileName}>Rear Light</Text>
+            <Text style={styles.lightTilePin}>
+              {isBraking
+                ? 'GPIO 26 OUT • 100% Brake'
+                : frontLightOn
+                ? 'GPIO 26 OUT • Running Tail'
+                : 'GPIO 26 OUT • Solid on Brake'}
+            </Text>
+          </View>
+        </View>
+
+        {/* Turn Signal Controls & Indicators */}
+        <View style={styles.turnSignalsSection}>
+          <Text style={styles.turnSignalsLabel}>TURN SIGNALS & HAZARDS (400ms Blinker)</Text>
+
+          <View style={styles.turnSignalsBtnRow}>
+            {/* Turn Left Button */}
+            <TouchableOpacity
+              style={[
+                styles.btnTurnSignal,
+                turnLeftOn && styles.btnTurnSignalLeftActive,
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                sendCmd('TL');
+              }}
+              activeOpacity={0.7}
+            >
+              <Animated.View style={{ opacity: turnLeftOn ? blinkAnim : 1 }}>
+                <Text style={[styles.turnArrowIcon, turnLeftOn && styles.turnArrowActive]}>
+                  ⬅️
+                </Text>
+              </Animated.View>
+              <View style={styles.turnBtnTextCol}>
+                <Text
+                  style={[
+                    styles.turnBtnTitle,
+                    turnLeftOn && styles.turnBtnTitleActive,
+                  ]}
+                >
+                  LEFT TURN
+                </Text>
+                <Text style={styles.turnBtnPin}>GPIO 14 OUT • D18 IN</Text>
+              </View>
+            </TouchableOpacity>
+
+            {/* Hazard Button */}
+            <TouchableOpacity
+              style={[
+                styles.btnHazard,
+                isHazard && styles.btnHazardActive,
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                sendCmd('HAZ');
+              }}
+              activeOpacity={0.7}
+            >
+              <Animated.View style={{ opacity: isHazard ? blinkAnim : 1 }}>
+                <Text style={styles.hazardIcon}>⚠️</Text>
+              </Animated.View>
+              <Text
+                style={[
+                  styles.btnHazardText,
+                  isHazard && styles.btnHazardTextActive,
+                ]}
+              >
+                {isHazard ? 'HAZARD ON' : 'HAZARD'}
+              </Text>
+            </TouchableOpacity>
+
+            {/* Turn Right Button */}
+            <TouchableOpacity
+              style={[
+                styles.btnTurnSignal,
+                turnRightOn && styles.btnTurnSignalRightActive,
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                sendCmd('TR');
+              }}
+              activeOpacity={0.7}
+            >
+              <View style={[styles.turnBtnTextCol, { alignItems: 'flex-end' }]}>
+                <Text
+                  style={[
+                    styles.turnBtnTitle,
+                    turnRightOn && styles.turnBtnTitleActive,
+                  ]}
+                >
+                  RIGHT TURN
+                </Text>
+                <Text style={styles.turnBtnPin}>GPIO 27 OUT • D21 IN</Text>
+              </View>
+              <Animated.View style={{ opacity: turnRightOn ? blinkAnim : 1 }}>
+                <Text style={[styles.turnArrowIcon, turnRightOn && styles.turnArrowActive]}>
+                  ➡️
+                </Text>
+              </Animated.View>
+            </TouchableOpacity>
+          </View>
+        </View>
+
+        {/* DDM Mode & Hardware Summary Bar */}
+        <View style={styles.ddmFooterRow}>
+          <View style={styles.ddmFooterLeft}>
+            <Text style={styles.ddmIcon}>🏎️</Text>
+            <View>
+              <Text style={styles.ddmTitle}>DDM Switch (GPIO 4)</Text>
+              <Text style={styles.ddmDesc}>Handlebar Dual Drive selector</Text>
+            </View>
+          </View>
+          <View
+            style={[
+              styles.ddmBadge,
+              ddmActive ? styles.ddmBadgeDual : styles.ddmBadgeSingle,
+            ]}
+          >
+            <Text
+              style={[
+                styles.ddmBadgeText,
+                ddmActive ? styles.ddmBadgeTextDual : styles.ddmBadgeTextSingle,
+              ]}
+            >
+              {ddmActive ? '⚡ DUAL MOTOR' : 'SINGLE MOTOR'}
+            </Text>
+          </View>
+        </View>
+      </View>
+    );
+  };
+
   return (
     <View style={[styles.safeArea, { paddingTop: safeTop, paddingBottom: safeBottom }]}>
       <StatusBar style="light" />
@@ -1816,6 +2247,7 @@ export default function App() {
                   {renderSpeedometer()}
                 </View>
                 <View style={styles.screen1RightCol}>
+                  {renderLightsBarLandscape()}
                   {renderTelemetry(true)}
                   {renderProfiles(true)}
                 </View>
@@ -1833,6 +2265,7 @@ export default function App() {
                   <Text style={styles.sectionTitle}>SCOOTER SETTINGS</Text>
                   <Text style={styles.activeProfileLabel}>Configuration & Tuning</Text>
                 </View>
+                {renderLightsCard()}
                 {renderAntisparkCard()}
                 {renderGearShiftCard()}
                 {renderCruiseCard()}
@@ -1875,6 +2308,7 @@ export default function App() {
         >
           {renderSpeedometer()}
           {renderTelemetry(false)}
+          {renderLightsCard()}
           {renderAntisparkCard()}
           {renderGearShiftCard()}
           {renderCruiseCard()}
@@ -3245,4 +3679,412 @@ const styles = StyleSheet.create({
     fontSize: 11,
     fontWeight: '700',
   },
+
+  // Lights & Indicators Section Styles
+  lightsCard: {
+    backgroundColor: '#101626',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 18,
+    padding: 16,
+    marginVertical: 6,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.35,
+    shadowRadius: 10,
+    elevation: 4,
+  },
+  lightsHeaderRow: {
+    marginBottom: 14,
+  },
+  lightsHeaderLeft: {
+    flex: 1,
+  },
+  lightsTitle: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.8,
+  },
+  lightsSubDesc: {
+    color: '#94a3b8',
+    fontSize: 11,
+    marginTop: 4,
+  },
+  lightsStatusBadge: {
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  lightsBadgeOn: {
+    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    borderColor: 'rgba(0, 242, 254, 0.5)',
+  },
+  lightsBadgeBlinking: {
+    backgroundColor: 'rgba(245, 158, 11, 0.2)',
+    borderColor: 'rgba(245, 158, 11, 0.6)',
+  },
+  lightsBadgeHazard: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: 'rgba(239, 68, 68, 0.7)',
+  },
+  lightsBadgeOff: {
+    backgroundColor: 'rgba(255, 255, 255, 0.06)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  lightsStatusBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  lightsBadgeTextOn: {
+    color: '#00f2fe',
+  },
+  lightsBadgeTextBlinking: {
+    color: '#fbbf24',
+  },
+  lightsBadgeTextHazard: {
+    color: '#f87171',
+  },
+  lightsBadgeTextOff: {
+    color: '#94a3b8',
+  },
+  lightsGrid: {
+    flexDirection: 'row',
+    gap: 12,
+    marginBottom: 12,
+  },
+  lightTile: {
+    flex: 1,
+    borderRadius: 14,
+    padding: 12,
+    borderWidth: 1,
+  },
+  lightTileInactive: {
+    backgroundColor: '#0a0f1d',
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+  },
+  lightTileFrontActive: {
+    backgroundColor: 'rgba(0, 242, 254, 0.08)',
+    borderColor: '#00f2fe',
+    shadowColor: '#00f2fe',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.35,
+    shadowRadius: 8,
+  },
+  lightTileTailActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.08)',
+    borderColor: '#ef4444',
+  },
+  lightTileBrakeActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.22)',
+    borderColor: '#ef4444',
+    shadowColor: '#ef4444',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.5,
+    shadowRadius: 10,
+  },
+  lightTileTopRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 10,
+  },
+  lightTileIconWrap: {
+    width: 34,
+    height: 34,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  lightTileIconWrapFrontOn: {
+    backgroundColor: 'rgba(0, 242, 254, 0.2)',
+  },
+  lightTileIconWrapTail: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+  },
+  lightTileIconWrapBrake: {
+    backgroundColor: 'rgba(239, 68, 68, 0.35)',
+  },
+  lightTileIcon: {
+    fontSize: 16,
+  },
+  lightPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 5,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  lightPillOff: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  lightPillFrontOn: {
+    backgroundColor: 'rgba(0, 242, 254, 0.2)',
+    borderColor: 'rgba(0, 242, 254, 0.6)',
+  },
+  lightPillTailOn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: 'rgba(239, 68, 68, 0.6)',
+  },
+  lightPillBrakeOn: {
+    backgroundColor: 'rgba(239, 68, 68, 0.35)',
+    borderColor: '#ef4444',
+  },
+  lightDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+  },
+  lightDotOff: {
+    backgroundColor: '#64748b',
+  },
+  lightDotFrontOn: {
+    backgroundColor: '#00f2fe',
+  },
+  lightDotTailOn: {
+    backgroundColor: '#ef4444',
+  },
+  lightDotBrakeOn: {
+    backgroundColor: '#ffffff',
+  },
+  lightPillText: {
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  lightPillTextOff: {
+    color: '#64748b',
+  },
+  lightPillTextFrontOn: {
+    color: '#00f2fe',
+  },
+  lightPillTextTailOn: {
+    color: '#f87171',
+  },
+  lightPillTextBrakeOn: {
+    color: '#ffffff',
+  },
+  lightTileName: {
+    color: '#ffffff',
+    fontSize: 13,
+    fontWeight: '700',
+  },
+  lightTilePin: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 3,
+  },
+  turnSignalsSection: {
+    backgroundColor: '#0a0f1d',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
+  turnSignalsLabel: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.6,
+    marginBottom: 10,
+  },
+  turnSignalsBtnRow: {
+    flexDirection: 'row',
+    gap: 8,
+    alignItems: 'center',
+  },
+  btnTurnSignal: {
+    flex: 1.2,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: '#101626',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 10,
+  },
+  btnTurnSignalLeftActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderColor: '#f59e0b',
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+  },
+  btnTurnSignalRightActive: {
+    backgroundColor: 'rgba(245, 158, 11, 0.15)',
+    borderColor: '#f59e0b',
+    shadowColor: '#f59e0b',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.4,
+    shadowRadius: 6,
+  },
+  turnArrowIcon: {
+    fontSize: 16,
+    opacity: 0.6,
+  },
+  turnArrowActive: {
+    opacity: 1,
+  },
+  turnBtnTextCol: {
+    flex: 1,
+  },
+  turnBtnTitle: {
+    color: '#ffffff',
+    fontSize: 11,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  turnBtnTitleActive: {
+    color: '#fbbf24',
+  },
+  turnBtnPin: {
+    color: '#64748b',
+    fontSize: 9,
+    marginTop: 2,
+  },
+  btnHazard: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#101626',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  btnHazardActive: {
+    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+    borderColor: '#ef4444',
+  },
+  hazardIcon: {
+    fontSize: 14,
+    marginBottom: 2,
+  },
+  btnHazardText: {
+    color: '#94a3b8',
+    fontSize: 9.5,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+  },
+  btnHazardTextActive: {
+    color: '#f87171',
+  },
+  ddmFooterRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: '#0a0f1d',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.06)',
+    borderRadius: 12,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+  },
+  ddmFooterLeft: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+  },
+  ddmIcon: {
+    fontSize: 18,
+  },
+  ddmTitle: {
+    color: '#ffffff',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  ddmDesc: {
+    color: '#64748b',
+    fontSize: 10,
+    marginTop: 2,
+  },
+  ddmBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+    borderWidth: 1,
+  },
+  ddmBadgeDual: {
+    backgroundColor: 'rgba(0, 242, 254, 0.15)',
+    borderColor: 'rgba(0, 242, 254, 0.5)',
+  },
+  ddmBadgeSingle: {
+    backgroundColor: 'rgba(255, 255, 255, 0.04)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  ddmBadgeText: {
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  ddmBadgeTextDual: {
+    color: '#00f2fe',
+  },
+  ddmBadgeTextSingle: {
+    color: '#64748b',
+  },
+
+  // Landscape Mini Lights Bar (Screen 1 Dashboard)
+  landscapeLightsBar: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    marginBottom: 10,
+  },
+  miniLightPill: {
+    flex: 1,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 5,
+    backgroundColor: '#101626',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 10,
+    paddingVertical: 7,
+    paddingHorizontal: 6,
+  },
+  miniLightPillAmber: {
+    backgroundColor: 'rgba(245, 158, 11, 0.18)',
+    borderColor: '#f59e0b',
+  },
+  miniLightPillCyan: {
+    backgroundColor: 'rgba(0, 242, 254, 0.18)',
+    borderColor: '#00f2fe',
+  },
+  miniLightPillRed: {
+    backgroundColor: 'rgba(239, 68, 68, 0.22)',
+    borderColor: '#ef4444',
+  },
+  miniLightIcon: {
+    fontSize: 12,
+  },
+  miniLightIconAmber: {
+    color: '#fbbf24',
+  },
+  miniLightText: {
+    color: '#64748b',
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  miniLightTextAmber: {
+    color: '#fbbf24',
+  },
+  miniLightTextCyan: {
+    color: '#00f2fe',
+  },
+  miniLightTextRed: {
+    color: '#f87171',
+  },
 });
+

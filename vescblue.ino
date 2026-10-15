@@ -6,14 +6,18 @@
 #include <Preferences.h>
 #include <Update.h>
 #include <VescUart.h>
+#include "LightsController.h"
+
+// Lights Controller Instance
+LightsController lights;
 
 // =========================================================================
 // Hardware & CAN Pin Configuration
 // =========================================================================
 #define THROTTLE_PIN 34
 
-// Default Brake Pin (GPIO 19 single pin default)
-int brakePin = 19; // Default GPIO 19 (Single brake pin)
+// Default Brake Pin (GPIO 19 soldered brake pin)
+int brakePin = 19;
 bool brakeActiveLow =
     true; // true = Active LOW (pulls to GND when brake engaged)
 bool brakeEnabled =
@@ -550,6 +554,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   // Handle Light button change
   if (light != lastLightState) {
     displayLightState = light;
+    lights.setFrontLight(light);
 
     // Secret combo unlock check: [1, 2, 3, 2, 3, 2, 3] + Light ON
     if (light && (memcmp(gearHistory, COMBO_KEY, 7) == 0)) {
@@ -766,36 +771,40 @@ void bleHandleCommand(const String &cmd) {
     }
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
-    if (p == 0 || p == 19 || p == 21 || p == 18 || p == 5 || p == 4) {
-      brakePin = p;
-      prefs.putInt("brake_pin", brakePin);
-      if (brakePin > 0) {
-        pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-        if (brakePin != 21) {
-          pinMode(21, INPUT_PULLDOWN);
-        }
-        blePushLine("BRAKE PIN set to GPIO " + String(brakePin));
-      } else {
-        pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-        pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-        blePushLine("BRAKE PIN set to DUAL (both GPIO 19 and 21)");
-      }
+    if (p == 19) {
+      brakePin = 19;
+      prefs.putInt("brake_pin", 19);
+      pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+      blePushLine("BRAKE PIN set to GPIO 19 (Soldered)");
     } else {
-      blePushLine("ERR valid pins: 19 (default), 21, 0 (dual)");
+      blePushLine("BRAKE PIN is fixed to GPIO 19 (Soldered)");
     }
   } else if (cmd.startsWith("BPOL ")) {
     int pol = cmd.substring(5).toInt();
     brakeActiveLow = (pol != 0);
     prefs.putBool("brake_low", brakeActiveLow);
-    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    if (brakePin == 0 || brakePin == 21) {
-      pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    } else {
-      pinMode(21, INPUT_PULLDOWN);
-    }
+    pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
     blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow
                                                       ? "Active LOW (GND)"
                                                       : "Active HIGH (3.3V)"));
+  } else if (cmd == "L" || cmd == "LIGHT") {
+    lights.toggleFrontLight();
+    blePushLine("LIGHT: " + String(lights.isFrontLightOn() ? "ON" : "OFF"));
+  } else if (cmd.startsWith("L ") || cmd.startsWith("LIGHT ")) {
+    int val = cmd.substring(cmd.indexOf(' ') + 1).toInt();
+    lights.setFrontLight(val != 0);
+    blePushLine("LIGHT: " + String(lights.isFrontLightOn() ? "ON" : "OFF"));
+  } else if (cmd == "TL" || cmd == "TURNL") {
+    lights.toggleTurnLeft();
+    blePushLine("TURN LEFT: " + String(lights.isTurnLeftActive() ? "ON" : "OFF"));
+  } else if (cmd == "TR" || cmd == "TURNR") {
+    lights.toggleTurnRight();
+    blePushLine("TURN RIGHT: " + String(lights.isTurnRightActive() ? "ON" : "OFF"));
+  } else if (cmd == "HAZ" || cmd == "HAZARD") {
+    lights.toggleHazard();
+    blePushLine("HAZARD: " + String(lights.isHazardActive() ? "ON" : "OFF"));
+  } else if (cmd == "DDM") {
+    blePushLine("DDM SWITCH: " + String(lights.isDdmActive() ? "ACTIVE (LOW)" : "INACTIVE (HIGH)"));
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
     if (bc >= 0.0f && bc <= 60.0f) {
@@ -863,8 +872,9 @@ void bleHandleCommand(const String &cmd) {
   } else if (cmd == "?") {
     blePushLine(
         "S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] "
-        "cruise | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC "
-        "[amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+        "cruise | BEN [0/1] brake-en | BC [amps] brake | L [0/1] light | TL "
+        "turnL | TR turnR | HAZ haz | DDM | CAN [id] | T [v b] test | K kick | "
+        "R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -975,29 +985,19 @@ void setup() {
   }
   gearShiftEnabled = prefs.getBool("gear_shift", true);
   cruiseControlEnabled = prefs.getBool("cruise_en", false);
-  brakePin = prefs.getInt("brake_pin", 19); // Default 19 (Single brake pin)
-  if (brakePin == 0) {
-    // Migrate 0 to single GPIO 19 because GPIO 21 is floating/unconnected
-    brakePin = 19;
-    prefs.putInt("brake_pin", 19);
-  }
+  brakePin = 19;                                     // Default 19 (Soldered brake pin)
+  prefs.putInt("brake_pin", 19);
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
   brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps =
       prefs.getFloat("brake_amps", 25.0f);      // Default 25A strong e-brake
   slaveCanId = prefs.getUChar("can_slave", 61); // Default CAN ID 61
 
-  // Set internal pullup/pulldown on configured brake pin
-  if (brakePin > 0) {
-    pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    if (brakePin != 21) {
-      pinMode(21,
-              INPUT_PULLDOWN); // Pull down unused GPIO 21 to stop floating EMI
-    }
-  } else {
-    pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-    pinMode(21, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
-  }
+  // Set internal pullup/pulldown on soldered brake pin (GPIO 19)
+  pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
+
+  // Initialize Lights Controller (Physical buttons & MOSFET/relay outputs)
+  lights.begin();
 
   bleInit();
 
@@ -1031,15 +1031,7 @@ void loop() {
     } else {
       if (now - lastBrakeSampleTime >= BRAKE_SAMPLE_INTERVAL_MS) {
         lastBrakeSampleTime = now;
-        bool rawReading = false;
-        if (brakePin == 0) {
-          // Dual-pin mode: Trigger if EITHER Pin 19 or Pin 21 is active
-          bool p19 = (digitalRead(19) == (brakeActiveLow ? LOW : HIGH));
-          bool p21 = (digitalRead(21) == (brakeActiveLow ? LOW : HIGH));
-          rawReading = p19 || p21;
-        } else {
-          rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
-        }
+        bool rawReading = (digitalRead(brakePin) == (brakeActiveLow ? LOW : HIGH));
         rawBrakePinState = rawReading;
 
         if (rawReading) {
@@ -1080,6 +1072,12 @@ void loop() {
 
   // 5. Update Display UART (Non-blocking)
   processDisplayUart(vehicleSpeedMps);
+
+  // 5b. Update Lights Controller (Inputs, Debouncing, Blinkers & Brake Light)
+  lights.update(debouncedBrakeState);
+  if (lights.isFrontLightOn() != displayLightState) {
+    displayLightState = lights.isFrontLightOn();
+  }
 
   // 6. INSTANT ZERO-LATENCY Throttle Calculation
   float rawRatio = 0.0f;
@@ -1187,9 +1185,10 @@ void loop() {
   }
 
   // 8. BLE notify live line at 5 Hz
+
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[180];
+    char buf[200];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -1197,11 +1196,15 @@ void loop() {
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s",
+        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d",
         vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
         currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
         brakeEnabled ? 1 : 0, targetAmps, kickBlocked ? "HELD" : "ROLL",
-        ccStatus);
+        ccStatus,
+        lights.isFrontLightOn() ? 1 : 0,
+        lights.isTurnLeftActive() ? 1 : 0,
+        lights.isTurnRightActive() ? 1 : 0,
+        lights.isDdmActive() ? 1 : 0);
     blePushLine(String(buf));
   }
 
