@@ -41,7 +41,7 @@
 // ============================================================================
 //                             VESC & MOTOR SETTINGS
 // ============================================================================
-#define CAN_SLAVE_ID 61         // CAN ID of the secondary/slave VESC
+#define CAN_SLAVE_ID 37         // CAN ID of the secondary/slave VESC
 #define DUAL_MOTOR_ENABLED true // True if driving dual VESCs via CAN
 
 // Wheel & Motor specifications (from display.lisp)

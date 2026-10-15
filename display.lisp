@@ -10,7 +10,7 @@
 (define profile_S3 (list 100 90))
 
 ;;;Set the id of the other VESC (no, not doing that automatically, for your safety)
-(define can_slave_id_list (list 61))
+(define can_slave_id_list (list 37))
 
 
 ;;;P06 and P07 set in display (important for speed calc)

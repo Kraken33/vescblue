@@ -30,8 +30,8 @@ bool brakeEnabled =
 
 HardwareSerial DisplaySerial(1);
 
-// Target CAN ID for the secondary VESC (Display side: ID 61 from display.lisp)
-uint8_t slaveCanId = 61;
+// Target CAN ID for the secondary VESC (Second motor: ID 37)
+uint8_t slaveCanId = 37;
 
 // =========================================================================
 // Scooter Wheel & Motor Constants (from display.lisp)
@@ -814,6 +814,8 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR brake amps range 0..60");
     }
+  } else if (cmd == "CAN") {
+    blePushLine("SLAVE CAN ID: " + String(slaveCanId));
   } else if (cmd.startsWith("CAN ")) {
     int cid = cmd.substring(4).toInt();
     if (cid >= 0 && cid <= 255) {
@@ -991,7 +993,12 @@ void setup() {
   brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps =
       prefs.getFloat("brake_amps", 25.0f);      // Default 25A strong e-brake
-  slaveCanId = prefs.getUChar("can_slave", 61); // Default CAN ID 61
+  slaveCanId = prefs.getUChar("can_slave", 37); // Default CAN ID 37 (Second Motor)
+  if (slaveCanId == 61) {
+    // Automatically migrate legacy default (61) to the new secondary motor ID (37)
+    slaveCanId = 37;
+    prefs.putUChar("can_slave", 37);
+  }
 
   // Set internal pullup/pulldown on soldered brake pin (GPIO 19)
   pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
