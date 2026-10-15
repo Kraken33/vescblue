@@ -13,6 +13,8 @@ import {
   Switch,
   AppState,
   AppStateStatus,
+  Linking,
+  Alert,
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import Slider from '@react-native-community/slider';
@@ -21,6 +23,7 @@ import * as Haptics from 'expo-haptics';
 import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { BleManager, Device, Characteristic, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
+import { ScooterBeacon, BeaconRangeEvent, BeaconRegionEvent } from 'scooter-beacon';
 
 // BLE UUIDs for ESP32 VESC Controller
 const BLE_SVC_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -29,6 +32,11 @@ const BLE_CONSOLE_UUID = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
 // BLE UUIDs for ESP32 Antispark Keyless Controller
 const BLE_ANTISPARK_SVC_UUID = '6e400010-b5a3-f393-e0a9-e50e24dcca9e';
 const BLE_ANTISPARK_CTRL_UUID = '6e400011-b5a3-f393-e0a9-e50e24dcca9e';
+
+// Apple iBeacon Constants for Scooter-Antispark Proximity Wake-Up
+const IBEACON_PROXIMITY_UUID = 'FDA50693-A4E2-4FB1-AFCF-C6EB07647825';
+const IBEACON_MAJOR = 1;
+const IBEACON_MINOR = 1;
 
 // BleManager instance singleton (safe for iOS Simulator where Bluetooth is unavailable)
 let bleManager: BleManager | null = null;
@@ -109,33 +117,27 @@ export default function App() {
   const [antisparkStatusText, setAntisparkStatusText] = useState('Disconnected');
   const [isAntisparkConnecting, setIsAntisparkConnecting] = useState(false);
   const [antisparkState, setAntisparkState] = useState(false); // true = ON (GPIO 10 HIGH), false = OFF (GPIO 10 LOW)
-  const [autoKeyEnabled, setAutoKeyEnabled] = useState(true);
-  const [antisparkRssi, setAntisparkRssi] = useState<number | null>(null);
-  const [filteredRssi, setFilteredRssi] = useState<number | null>(null);
-  const [proximityZone, setProximityZone] = useState<'immediate' | 'in_zone' | 'edge' | 'out_of_zone' | 'disconnected'>('disconnected');
-  const [exitCountdown, setExitCountdown] = useState<number | null>(null);
-  const [motionLockActive, setMotionLockActive] = useState(false);
-  const [smartKeySettingsOpen, setSmartKeySettingsOpen] = useState(false);
+  // Apple iBeacon Hands-Free Auto Key State
+  const [iBeaconAutoKey, setIBeaconAutoKey] = useState<boolean>(true);
+  const [iBeaconStatus, setIBeaconStatus] = useState<string>('Standby');
+  const [iBeaconAuthStatus, setIBeaconAuthStatus] = useState<string>('unknown');
+  const [iBeaconProximity, setIBeaconProximity] = useState<'immediate' | 'near' | 'far' | 'unknown'>('unknown');
+  const [iBeaconRssi, setIBeaconRssi] = useState<number | null>(null);
+  const [iBeaconAccuracy, setIBeaconAccuracy] = useState<number | null>(null);
+  const [iBeaconSensitivity, setIBeaconSensitivity] = useState<'immediate' | 'near' | 'far'>('near');
+  const [manualOverrideOff, setManualOverrideOff] = useState<boolean>(() => {
+    return ScooterBeacon.isManualOverrideOff();
+  });
 
-  // Proximity Thresholds
-  const [enterThreshold, setEnterThreshold] = useState(-70); // dBm
-  const [exitThreshold, setExitThreshold] = useState(-85); // dBm
-  const [exitDelaySec, setExitDelaySec] = useState(8); // seconds
+  const manualOverrideOffRef = useRef<boolean>(ScooterBeacon.isManualOverrideOff());
 
   // Antispark Refs (synchronized for interval and BLE callbacks)
   const antisparkCharRef = useRef<Characteristic | null>(null);
   const antisparkNotifSubRef = useRef<Subscription | null>(null);
-  const isAntisparkWritingRef = useRef(false);
-  const rssiPollIntervalRef = useRef<any>(null);
-  const exitCountdownTimerRef = useRef<any>(null);
-  const exitCountdownValRef = useRef<number | null>(null);
-  const filteredRssiRef = useRef<number | null>(null);
   const speedRef = useRef<number>(0.0);
   const antisparkStateRef = useRef<boolean>(false);
-  const autoKeyEnabledRef = useRef<boolean>(true);
-  const enterThresholdRef = useRef<number>(-70);
-  const exitThresholdRef = useRef<number>(-85);
-  const exitDelaySecRef = useRef<number>(8);
+  const iBeaconAutoKeyRef = useRef<boolean>(true);
+  const iBeaconSensitivityRef = useRef<'immediate' | 'near' | 'far'>('near');
   const manualDisconnectRef = useRef<boolean>(false);
   const autoReconnectTimerRef = useRef<any>(null);
   const savedAntisparkIdRef = useRef<string | null>(null);
@@ -147,17 +149,15 @@ export default function App() {
     speedRef.current = speed;
   }, [speed]);
   useEffect(() => {
-    autoKeyEnabledRef.current = autoKeyEnabled;
-  }, [autoKeyEnabled]);
+    iBeaconAutoKeyRef.current = iBeaconAutoKey;
+  }, [iBeaconAutoKey]);
   useEffect(() => {
-    enterThresholdRef.current = enterThreshold;
-  }, [enterThreshold]);
+    iBeaconSensitivityRef.current = iBeaconSensitivity;
+  }, [iBeaconSensitivity]);
   useEffect(() => {
-    exitThresholdRef.current = exitThreshold;
-  }, [exitThreshold]);
-  useEffect(() => {
-    exitDelaySecRef.current = exitDelaySec;
-  }, [exitDelaySec]);
+    manualOverrideOffRef.current = manualOverrideOff;
+    ScooterBeacon.setManualOverrideOff(manualOverrideOff);
+  }, [manualOverrideOff]);
 
   // Request Android Bluetooth Permissions
   const requestAndroidPermissions = async () => {
@@ -235,101 +235,7 @@ export default function App() {
     });
   };
 
-  // =========================================================================
-  // Antispark Smart Key BLE & Proximity Engine (Instant Low-Latency Mode)
-  // =========================================================================
-  const updateProximityEvaluation = (currentRssi: number) => {
-    const prev = filteredRssiRef.current;
-    // Fast-attack on approach (85% weight) for zero-latency turn-on; smooth decay on exit
-    const alpha = (prev === null || currentRssi > prev) ? 0.85 : 0.25;
-    const filtered = prev === null ? currentRssi : alpha * currentRssi + (1 - alpha) * prev;
-    filteredRssiRef.current = filtered;
-    setFilteredRssi(Math.round(filtered));
-    setAntisparkRssi(currentRssi);
 
-    let zone: 'immediate' | 'in_zone' | 'edge' | 'out_of_zone' = 'edge';
-    if (filtered >= -60) {
-      zone = 'immediate';
-    } else if (filtered >= enterThresholdRef.current) {
-      zone = 'in_zone';
-    } else if (filtered <= exitThresholdRef.current) {
-      zone = 'out_of_zone';
-    } else {
-      zone = 'edge';
-    }
-    setProximityZone(zone);
-
-    // Auto Proximity Key Engine
-    if (autoKeyEnabledRef.current) {
-      // Instant Trigger: If either raw RSSI or filtered RSSI crosses threshold
-      if (currentRssi >= enterThresholdRef.current || filtered >= enterThresholdRef.current) {
-        // In zone! Cancel any pending exit countdown
-        if (exitCountdownTimerRef.current) {
-          clearInterval(exitCountdownTimerRef.current);
-          exitCountdownTimerRef.current = null;
-        }
-        exitCountdownValRef.current = null;
-        setExitCountdown(null);
-        setMotionLockActive(false);
-
-        // Turn Antispark ON instantly if currently OFF
-        if (!antisparkStateRef.current) {
-          addConsole(`[ANTISPARK] Proximity detected (${currentRssi} dBm). Instant Auto-Power ON!`);
-          sendAntisparkCmd('PWR 1');
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-        }
-      } else if (filtered <= exitThresholdRef.current) {
-        // Out of zone!
-        if (antisparkStateRef.current) {
-          // If countdown is not ticking, start it
-          if (!exitCountdownTimerRef.current) {
-            let remaining = exitDelaySecRef.current;
-            exitCountdownValRef.current = remaining;
-            setExitCountdown(remaining);
-            addConsole(`[ANTISPARK] Out of zone (${filtered.toFixed(0)} dBm). Starting ${remaining}s auto-off countdown...`);
-
-            exitCountdownTimerRef.current = setInterval(() => {
-              if (exitCountdownValRef.current !== null && exitCountdownValRef.current > 1) {
-                exitCountdownValRef.current -= 1;
-                setExitCountdown(exitCountdownValRef.current);
-              } else {
-                // Countdown reached 0
-                clearInterval(exitCountdownTimerRef.current);
-                exitCountdownTimerRef.current = null;
-                exitCountdownValRef.current = null;
-                setExitCountdown(null);
-
-                // Check Motion Interlock before powering off
-                if (speedRef.current > 0.5) {
-                  setMotionLockActive(true);
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                  addConsole(`[ANTISPARK] ⚠️ MOTION INTERLOCK! Speed is ${speedRef.current.toFixed(1)} km/h. Power-off BLOCKED!`);
-                } else {
-                  setMotionLockActive(false);
-                  addConsole('[ANTISPARK] Proximity exit confirmed. Auto-Power OFF triggered.');
-                  sendAntisparkCmd('PWR 0');
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                }
-              }
-            }, 1000);
-          }
-        }
-      }
-    }
-  };
-
-  const startRssiPolling = (dev: Device, intervalMs?: number) => {
-    if (rssiPollIntervalRef.current) clearInterval(rssiPollIntervalRef.current);
-    const ms = intervalMs ?? (appStateRef.current === 'active' ? 250 : 2000);
-    rssiPollIntervalRef.current = setInterval(async () => {
-      try {
-        const updatedDev = await dev.readRSSI();
-        if (updatedDev && typeof updatedDev.rssi === 'number') {
-          updateProximityEvaluation(updatedDev.rssi);
-        }
-      } catch (_) {}
-    }, ms);
-  };
 
   // Adaptive background/foreground handling when screen is locked vs active
   useEffect(() => {
@@ -337,20 +243,148 @@ export default function App() {
       const prev = appStateRef.current;
       appStateRef.current = nextAppState;
       addConsole(`[APP] State: ${prev} -> ${nextAppState}`);
-
-      if (nextAppState === 'active') {
-        // Returned to foreground: switch to high-speed 250ms polling
-        if (antisparkDeviceRef.current) {
-          startRssiPolling(antisparkDeviceRef.current, 250);
-        }
-      } else {
-        // Screen locked or backgrounded: throttle polling to 2000ms to save battery
-        if (antisparkDeviceRef.current) {
-          startRssiPolling(antisparkDeviceRef.current, 2000);
-        }
-      }
     });
     return () => subscription.remove();
+  }, []);
+
+  // -------------------------------------------------------------------------
+  // Apple iBeacon Proximity Engine (iOS Silicon-Level Background Wake-Up)
+  // -------------------------------------------------------------------------
+  useEffect(() => {
+    if (!ScooterBeacon.isAvailable()) {
+      addConsole('[iBEACON] ⚠️ Native module not active in this app binary.');
+      setIBeaconAuthStatus('unavailable');
+      return;
+    }
+
+    const checkAuthAndInit = () => {
+      const status = ScooterBeacon.getAuthorizationStatus();
+      setIBeaconAuthStatus(status);
+      addConsole(`[iBEACON] CoreLocation Auth: ${status}`);
+
+      if (status === 'authorizedAlways' || status === 'authorizedWhenInUse') {
+        if (iBeaconAutoKeyRef.current && !manualOverrideOffRef.current && !ScooterBeacon.isManualOverrideOff()) {
+          ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+          setIBeaconStatus('Armed • Listening');
+          addConsole('[iBEACON] 🛡️ Monitoring Scooter Beacon for keyless auto-unlock');
+        } else if (manualOverrideOffRef.current || ScooterBeacon.isManualOverrideOff()) {
+          setIBeaconStatus('Disabled • Manual Turn OFF Active');
+          addConsole('[iBEACON] 🛑 Manual Turn OFF active from previous session. Auto-ignition held OFF.');
+        }
+      } else if (status === 'notDetermined') {
+        ScooterBeacon.requestLocationPermission();
+      }
+    };
+
+    checkAuthAndInit();
+
+    // Event 1: Hardware-Level Region Enter (wakes app even when locked in pocket)
+    const enterSub = ScooterBeacon.addEnterListener((event) => {
+      addConsole(`[iBEACON] 📍 ENTERED Scooter Beacon Region! State: ${event.state ?? 'inside'}`);
+      setIBeaconStatus('In Proximity • Auto-Connecting');
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+
+      if (manualOverrideOffRef.current) {
+        addConsole('[iBEACON] 🛑 Region entered, but Manual Turn OFF has highest priority. Auto-connect suppressed.');
+        return;
+      }
+
+      if (iBeaconAutoKeyRef.current && !antisparkCharRef.current && !isAntisparkConnectingRef.current) {
+        addConsole('[iBEACON] Auto Key: Waking from pocket, auto-connecting to Antispark...');
+        scanAndConnectAntispark();
+      }
+    });
+
+    // Event 2: Region Exit
+    const exitSub = ScooterBeacon.addExitListener((event) => {
+      addConsole(`[iBEACON] 🚶 EXITED Scooter Beacon Region (${event.region})`);
+      setIBeaconStatus('Out of Range');
+      setIBeaconProximity('far');
+      if (manualOverrideOffRef.current) {
+        manualOverrideOffRef.current = false;
+        setManualOverrideOff(false);
+        ScooterBeacon.setManualOverrideOff(false);
+        addConsole('[iBEACON] 🔄 Walked away: Manual power-off lock cleared. Proximity re-armed for next approach.');
+      }
+    });
+
+    // Event 3: Calibrated Ranging (sub-meter accuracy)
+    const rangeSub = ScooterBeacon.addRangeListener((event) => {
+      if (typeof event.rssi === 'number' && event.rssi !== 0) {
+        setIBeaconRssi(event.rssi);
+      }
+      if (event.accuracy && event.accuracy > 0) {
+        setIBeaconAccuracy(parseFloat(event.accuracy.toFixed(1)));
+      }
+
+      let proxStr: 'immediate' | 'near' | 'far' | 'unknown' = 'unknown';
+      if (event.proximity === 1) {
+        proxStr = 'immediate';
+      } else if (event.proximity === 2) {
+        proxStr = 'near';
+      } else if (event.proximity === 3) {
+        proxStr = 'far';
+      } else if (event.accuracy && event.accuracy > 0) {
+        // Distance-based fallback when CLProximity is 0 (CLProximityUnknown)
+        proxStr = event.accuracy <= 1.2 ? 'immediate' : event.accuracy <= 2.5 ? 'near' : 'far';
+      } else if (typeof event.rssi === 'number' && event.rssi !== 0) {
+        // RF fallback
+        proxStr = event.rssi >= -65 ? 'immediate' : event.rssi >= -80 ? 'near' : 'far';
+      }
+
+      if (proxStr !== 'unknown') {
+        setIBeaconProximity(proxStr);
+      }
+
+      // Manual turn-off has HIGHEST priority!
+      if (manualOverrideOffRef.current || ScooterBeacon.isManualOverrideOff()) {
+        return;
+      }
+
+      // Check user sensitivity threshold
+      const sens = iBeaconSensitivityRef.current;
+      const shouldTrigger =
+        sens === 'far' ? (proxStr === 'immediate' || proxStr === 'near' || proxStr === 'far') :
+        sens === 'near' ? (proxStr === 'immediate' || proxStr === 'near') :
+        proxStr === 'immediate';
+
+      if (
+        shouldTrigger &&
+        iBeaconAutoKeyRef.current &&
+        !antisparkCharRef.current &&
+        !isAntisparkConnectingRef.current &&
+        !antisparkStateRef.current
+      ) {
+        addConsole(`[iBEACON] 🎯 Target Proximity reached (${proxStr}, ${event.accuracy > 0 ? event.accuracy.toFixed(1) + 'm' : event.rssi + 'dBm'}). Auto-Power ON!`);
+        scanAndConnectAntispark();
+      }
+    });
+
+    // Event 4: Authorization status change
+    const authSub = ScooterBeacon.addAuthListener((event) => {
+      addConsole(`[iBEACON] Location Auth changed: ${event.status}`);
+      setIBeaconAuthStatus(event.status);
+      if (
+        (event.status === 'authorizedAlways' || event.status === 'authorizedWhenInUse') &&
+        iBeaconAutoKeyRef.current
+      ) {
+        ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+        setIBeaconStatus('Armed • Listening');
+      }
+    });
+
+    // Event 5: CoreLocation error callback
+    const errorSub = ScooterBeacon.addErrorListener((event) => {
+      addConsole(`[iBEACON] ⚠️ Error (${event.phase || 'general'}): ${event.error}`);
+    });
+
+    return () => {
+      enterSub?.remove();
+      exitSub?.remove();
+      rangeSub?.remove();
+      authSub?.remove();
+      errorSub?.remove();
+    };
   }, []);
 
   const sendAntisparkCmd = async (cmdStr: string) => {
@@ -369,7 +403,6 @@ export default function App() {
 
     if (cmdStr === 'PWR 0' || cmdStr === 'OFF') {
       if (speedRef.current > 0.5) {
-        setMotionLockActive(true);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
         addConsole(`[ANTISPARK] ⚠️ MOTION INTERLOCK! Speed is ${speedRef.current.toFixed(1)} km/h. Cannot turn off while moving!`);
         return;
@@ -378,10 +411,23 @@ export default function App() {
 
     // Optimistic Zero-Latency UI feedback
     if (cmdStr === 'PWR 1' || cmdStr === 'ON') {
+      manualOverrideOffRef.current = false;
+      setManualOverrideOff(false);
+      ScooterBeacon.setManualOverrideOff(false);
+      if (iBeaconAutoKeyRef.current) {
+        ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+        setIBeaconStatus('Armed • Listening');
+      }
       antisparkStateRef.current = true;
       setAntisparkState(true);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     } else if (cmdStr === 'PWR 0' || cmdStr === 'OFF') {
+      manualOverrideOffRef.current = true;
+      setManualOverrideOff(true);
+      ScooterBeacon.setManualOverrideOff(true);
+      ScooterBeacon.stopMonitoring();
+      setIBeaconStatus('Disabled • Manual Turn OFF Active');
+      addConsole('[ANTISPARK] 🛑 Manual Turn OFF: Proximity auto-ignition held OFF.');
       antisparkStateRef.current = false;
       setAntisparkState(false);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -394,11 +440,18 @@ export default function App() {
 
     try {
       const base64Data = Buffer.from(cmdStr, 'utf-8').toString('base64');
-      // Use writeWithoutResponse for immediate radio transmission (no GATT round-trip latency)
-      try {
-        await antisparkCharRef.current.writeWithoutResponse(base64Data);
-      } catch (_) {
-        await antisparkCharRef.current.writeWithResponse(base64Data);
+      if (cmdStr.startsWith('PWR') || cmdStr === 'ON' || cmdStr === 'OFF') {
+        try {
+          await antisparkCharRef.current.writeWithResponse(base64Data);
+        } catch (_) {
+          await antisparkCharRef.current.writeWithoutResponse(base64Data);
+        }
+      } else {
+        try {
+          await antisparkCharRef.current.writeWithoutResponse(base64Data);
+        } catch (_) {
+          await antisparkCharRef.current.writeWithResponse(base64Data);
+        }
       }
       addConsole(`[ANTISPARK-TX] ${cmdStr}`);
     } catch (e: any) {
@@ -418,16 +471,6 @@ export default function App() {
       antisparkStateRef.current = isPwrOn;
       setAntisparkState(isPwrOn);
     }
-    if (autoMatch) {
-      const isAuto = autoMatch[1] === '1';
-      autoKeyEnabledRef.current = isAuto;
-      setAutoKeyEnabled(isAuto);
-    }
-    if (toMatch) {
-      const toVal = parseInt(toMatch[1], 10);
-      exitDelaySecRef.current = toVal;
-      setExitDelaySec(toVal);
-    }
   };
 
   // Background auto-reconnect is disabled: Connection is initiated manually via the dedicated app button
@@ -445,13 +488,6 @@ export default function App() {
       clearTimeout(autoReconnectTimerRef.current);
       autoReconnectTimerRef.current = null;
     }
-    // Cancel any pending countdown
-    if (exitCountdownTimerRef.current) {
-      clearInterval(exitCountdownTimerRef.current);
-      exitCountdownTimerRef.current = null;
-    }
-    exitCountdownValRef.current = null;
-    setExitCountdown(null);
 
     try {
       setAntisparkStatusText('Connecting to Antispark...');
@@ -498,9 +534,6 @@ export default function App() {
       setTimeout(() => {
         sendAntisparkCmd('PWR 1');
       }, 300);
-
-      // Start RSSI polling for radar/signal bars (500ms)
-      startRssiPolling(connected, 500);
     } catch (e: any) {
       console.warn('Antispark connect failed:', e);
       setAntisparkStatusText('Failed: ' + e.message);
@@ -514,8 +547,20 @@ export default function App() {
     }
   };
 
-  const scanAndConnectAntispark = async () => {
+  const scanAndConnectAntispark = async (isManual: boolean = false) => {
     manualDisconnectRef.current = false;
+    if (isManual) {
+      manualOverrideOffRef.current = false;
+      setManualOverrideOff(false);
+      ScooterBeacon.setManualOverrideOff(false);
+      if (iBeaconAutoKeyRef.current) {
+        ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+        setIBeaconStatus('Armed • Listening');
+      }
+    } else if (manualOverrideOffRef.current || ScooterBeacon.isManualOverrideOff()) {
+      addConsole('[iBEACON] 🛑 Auto-ignition suppressed: Manual Turn OFF has priority.');
+      return;
+    }
     if (isAntisparkConnectingRef.current || isAntisparkConnected) return;
 
     isAntisparkConnectingRef.current = true;
@@ -532,10 +577,6 @@ export default function App() {
       setAntisparkState(true);
       antisparkStateRef.current = true;
       setAntisparkStatusText('Connected (Simulated)');
-      setProximityZone('in_zone');
-      setFilteredRssi(-65);
-      filteredRssiRef.current = -65;
-      setAntisparkRssi(-65);
       setIsAntisparkConnecting(false);
       isAntisparkConnectingRef.current = false;
       addConsole('[SIMULATOR] Antispark connected and powered ON.');
@@ -560,7 +601,20 @@ export default function App() {
         }
       }, 8000);
 
-      manager.startDeviceScan([BLE_ANTISPARK_SVC_UUID], { allowDuplicates: true }, async (error, scannedDevice) => {
+      // Attempt direct reconnection if device ID is already known
+      if (savedAntisparkIdRef.current) {
+        try {
+          const directDev = await manager.connectToDevice(savedAntisparkIdRef.current, { autoConnect: false });
+          if (directDev) {
+            clearTimeout(scanTimeout);
+            connectAntisparkDevice(directDev);
+            return;
+          }
+        } catch (_) {}
+      }
+
+      const scanServices = appStateRef.current === 'active' ? null : [BLE_ANTISPARK_SVC_UUID];
+      manager.startDeviceScan(scanServices, { allowDuplicates: true }, async (error, scannedDevice) => {
         if (error) {
           clearTimeout(scanTimeout);
           setAntisparkStatusText('Scan error: ' + error.message);
@@ -573,7 +627,9 @@ export default function App() {
 
         const matchesName =
           scannedDevice.name === 'Scooter-Antispark' ||
-          scannedDevice.localName === 'Scooter-Antispark';
+          scannedDevice.localName === 'Scooter-Antispark' ||
+          scannedDevice.name === 'Antispark' ||
+          scannedDevice.localName === 'Antispark';
         const matchesSvc =
           scannedDevice.serviceUUIDs &&
           scannedDevice.serviceUUIDs.some(
@@ -598,6 +654,19 @@ export default function App() {
 
   const disconnectAntispark = async () => {
     manualDisconnectRef.current = true;
+    manualOverrideOffRef.current = true;
+    setManualOverrideOff(true);
+    ScooterBeacon.setManualOverrideOff(true);
+    ScooterBeacon.stopMonitoring();
+    setIBeaconStatus('Disabled • Manual Turn OFF Active');
+    addConsole('[ANTISPARK] 🛑 Manual Turn OFF requested. Disabling iBeacon on ESP32 & iOS...');
+
+    // Explicitly send PWR 0 to ESP32 to deactivate iBeacon advertising
+    try {
+      await sendAntisparkCmd('PWR 0');
+    } catch (_) {}
+    await new Promise((r) => setTimeout(r, 200));
+
     if (autoReconnectTimerRef.current) {
       clearTimeout(autoReconnectTimerRef.current);
       autoReconnectTimerRef.current = null;
@@ -606,17 +675,6 @@ export default function App() {
     if (manager) {
       try { manager.stopDeviceScan(); } catch (_) {}
     }
-
-    if (rssiPollIntervalRef.current) {
-      clearInterval(rssiPollIntervalRef.current);
-      rssiPollIntervalRef.current = null;
-    }
-    if (exitCountdownTimerRef.current) {
-      clearInterval(exitCountdownTimerRef.current);
-      exitCountdownTimerRef.current = null;
-    }
-    exitCountdownValRef.current = null;
-    setExitCountdown(null);
 
     if (antisparkNotifSubRef.current) {
       antisparkNotifSubRef.current.remove();
@@ -635,17 +693,6 @@ export default function App() {
     setAntisparkDevice(null);
     antisparkDeviceRef.current = null;
     antisparkCharRef.current = null;
-    setProximityZone('disconnected');
-    setAntisparkRssi(null);
-    setFilteredRssi(null);
-    filteredRssiRef.current = null;
-
-    if (exitCountdownTimerRef.current) {
-      clearInterval(exitCountdownTimerRef.current);
-      exitCountdownTimerRef.current = null;
-    }
-    exitCountdownValRef.current = null;
-    setExitCountdown(null);
 
     if (autoReconnectTimerRef.current) {
       clearTimeout(autoReconnectTimerRef.current);
@@ -676,10 +723,6 @@ export default function App() {
       setAntisparkState(true);
       antisparkStateRef.current = true;
       setAntisparkStatusText('Connected (Simulated)');
-      setProximityZone('in_zone');
-      setFilteredRssi(-65);
-      filteredRssiRef.current = -65;
-      setAntisparkRssi(-65);
 
       setStatusText('Simulator Demo (Active)');
       addConsole('[SIMULATOR] CoreBluetooth is unavailable on iOS Simulator.');
@@ -1161,16 +1204,6 @@ export default function App() {
   );
 
   const renderAntisparkCard = () => {
-    // 5 visual bars calculation
-    const currentRssi = filteredRssi ?? -100;
-    const barLevels = [
-      currentRssi >= -95,
-      currentRssi >= -85,
-      currentRssi >= -75,
-      currentRssi >= -65,
-      currentRssi >= -55,
-    ];
-
     return (
       <View style={styles.antisparkCard}>
         {/* Header Row */}
@@ -1196,7 +1229,7 @@ export default function App() {
                 <View style={{ flex: 1 }}>
                   <Text style={styles.powerConnectedTitle}>⚡ SCOOTER POWERED ON</Text>
                   <Text style={styles.powerConnectedSub}>
-                    GPIO 10 HIGH (3.3V) • Onboard LED ON • Auto-off when signal lost
+                    GPIO 10 HIGH (+) • GPIO 20 LOW (-) • Optocoupler Active
                   </Text>
                 </View>
               </View>
@@ -1214,7 +1247,7 @@ export default function App() {
                 styles.btnDedicatedPowerConnect,
                 isAntisparkConnecting && styles.btnDedicatedPowerConnectLoading,
               ]}
-              onPress={isAntisparkConnecting ? undefined : scanAndConnectAntispark}
+              onPress={isAntisparkConnecting ? undefined : () => scanAndConnectAntispark(true)}
               activeOpacity={0.8}
               disabled={isAntisparkConnecting}
             >
@@ -1251,242 +1284,235 @@ export default function App() {
               </Text>
               <View style={[styles.antisparkStateTag, antisparkState ? styles.antisparkStateTagActive : styles.antisparkStateTagInactive]}>
                 <Text style={[styles.antisparkStateTagText, antisparkState && styles.antisparkStateTagTextActive]}>
-                  {antisparkState ? 'GPIO 10 HIGH' : 'GPIO 10 LOW'}
+                  {antisparkState ? 'PIN 10 HIGH • PIN 20 LOW' : 'PIN 10 LOW • PIN 20 LOW'}
                 </Text>
               </View>
             </View>
             <Text style={styles.antisparkHeroSub}>
               {antisparkState
-                ? '⚡ System Power Engaged • Onboard LED (GPIO 8) ON'
-                : '⚪ Standby • Onboard LED (GPIO 8) OFF • Scooter Depowered'}
+                ? '⚡ Optocoupler Active: GPIO 10 (+) -> GPIO 20 (-)'
+                : '⚪ Standby: Optocoupler Depowered (0V differential)'}
             </Text>
           </View>
         </View>
 
-        {/* Proximity Radar & Signal Bars */}
-        <View style={styles.radarCard}>
-          <View style={styles.radarRow}>
-            <View style={[
-              styles.radarPill,
-              proximityZone === 'immediate'
-                ? styles.radarPillImmediate
-                : proximityZone === 'in_zone'
-                ? styles.radarPillInZone
-                : proximityZone === 'edge'
-                ? styles.radarPillEdge
-                : proximityZone === 'out_of_zone'
-                ? styles.radarPillOut
-                : styles.radarPillDisc
-            ]}>
-              <Text style={[
-                styles.radarPillText,
-                (proximityZone === 'immediate' || proximityZone === 'in_zone') && styles.radarPillTextGreen,
-                proximityZone === 'edge' && styles.radarPillTextYellow,
-                proximityZone === 'out_of_zone' && styles.radarPillTextRed,
-              ]}>
-                {proximityZone === 'immediate'
-                  ? '🟢 IMMEDIATE (< 1m)'
-                  : proximityZone === 'in_zone'
-                  ? '🟢 IN REGISTERED ZONE (< 2m)'
-                  : proximityZone === 'edge'
-                  ? '🟡 ZONE BOUNDARY (~ 3-5m)'
-                  : proximityZone === 'out_of_zone'
-                  ? '🔴 OUT OF ZONE (> 5m)'
-                  : '⚪ SEARCHING / DISCONNECTED'}
-              </Text>
-            </View>
 
-            {/* RSSI Signal Meter */}
-            <View style={styles.signalMeterWrap}>
-              <Text style={styles.rssiValueText}>
-                {filteredRssi !== null ? `${filteredRssi} dBm` : '-- dBm'}
-              </Text>
-              <View style={styles.signalBarsRow}>
-                {barLevels.map((lvl, idx) => (
-                  <View
-                    key={idx}
-                    style={[
-                      styles.signalBar,
-                      lvl && (proximityZone === 'out_of_zone' ? styles.signalBarRed : styles.signalBarActive),
-                      { height: 6 + idx * 3 }
-                    ]}
-                  />
-                ))}
+
+        {/* Apple iBeacon Hands-Free Auto Key Card */}
+        <View style={styles.ibeaconCard}>
+          <View style={styles.ibeaconHeaderRow}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.ibeaconTitle}>🍎 APPLE iBEACON AUTO-IGNITION</Text>
+                <View style={[styles.beaconBadge, iBeaconAutoKey ? styles.beaconBadgeActive : styles.beaconBadgeInactive]}>
+                  <Text style={styles.beaconBadgeText}>
+                    {iBeaconAutoKey ? 'ARMED' : 'OFF'}
+                  </Text>
+                </View>
               </View>
+              <Text style={styles.ibeaconDesc}>
+                {iBeaconAutoKey
+                  ? 'Hardware-level iOS detection. Wakes your phone when locked in pocket & auto-engages power.'
+                  : 'Hands-free beacon wake-up disabled. Manual button control only.'}
+              </Text>
             </View>
-          </View>
-        </View>
-
-        {/* Live Exit Countdown Alert */}
-        {exitCountdown !== null && (
-          <View style={styles.countdownAlertBox}>
-            <Text style={styles.countdownAlertText}>
-              ⏳ Auto Power-Off in {exitCountdown}s (Leaving proximity zone)
-            </Text>
-          </View>
-        )}
-
-        {/* Motion Safety Interlock Alert */}
-        {(motionLockActive || (speed > 0.5 && proximityZone === 'out_of_zone')) && (
-          <View style={styles.motionLockAlertBox}>
-            <Text style={styles.motionLockAlertText}>
-              🛡️ SAFETY INTERLOCK ACTIVE: Antispark shutoff blocked while scooter is moving ({speed.toFixed(1)} km/h)
-            </Text>
-          </View>
-        )}
-
-        {/* Auto Proximity Key Switch */}
-        <View style={styles.autoKeySwitchRow}>
-          <View style={styles.autoKeyTextCol}>
-            <Text style={styles.controlLabel}>Auto Proximity Key</Text>
-            <Text style={styles.gearShiftDesc}>
-              {autoKeyEnabled
-                ? 'Turns antispark ON when entering zone; turns OFF when walking away.'
-                : 'Proximity automation paused. Use manual buttons below.'}
-            </Text>
-          </View>
-          <Switch
-            value={autoKeyEnabled}
-            onValueChange={(val) => {
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-              setAutoKeyEnabled(val);
-              autoKeyEnabledRef.current = val;
-              sendAntisparkCmd(`AUTO ${val ? 1 : 0}`);
-            }}
-            trackColor={{ false: '#1e293b', true: '#10b981' }}
-            thumbColor={autoKeyEnabled ? '#ffffff' : '#64748b'}
-            ios_backgroundColor="#1e293b"
-          />
-        </View>
-
-        {/* Bench-Test Manual Controls */}
-        <View style={styles.testSection}>
-          <Text style={styles.testSectionTitle}>BENCH TEST CONTROLS (WITHOUT ANTISPARK WIRED)</Text>
-          <View style={styles.testBtnRow}>
-            <TouchableOpacity
-              style={[styles.btnTestPower, styles.btnTestPowerOn, antisparkState && styles.btnTestPowerOnActive]}
-              onPress={() => sendAntisparkCmd('PWR 1')}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.btnTestPowerOnText}>⚡ Force Test ON</Text>
-            </TouchableOpacity>
-
-            <TouchableOpacity
-              style={[styles.btnTestPower, styles.btnTestPowerOff, !antisparkState && styles.btnTestPowerOffActive]}
-              onPress={() => sendAntisparkCmd('PWR 0')}
-              activeOpacity={0.7}
-            >
-              <Text style={styles.btnTestPowerOffText}>⚪ Force Test OFF</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* Simulator Demo Proximity Triggers (when in Demo Mode) */}
-        {isDemoMode && (
-          <View style={styles.simDemoBox}>
-            <Text style={styles.simDemoTitle}>SIMULATOR PROXIMITY TEST</Text>
-            <View style={styles.testBtnRow}>
-              <TouchableOpacity
-                style={styles.btnSimApproach}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  updateProximityEvaluation(-63);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.btnSimApproachText}>🏃 Approach (-63 dBm)</Text>
-              </TouchableOpacity>
-
-              <TouchableOpacity
-                style={styles.btnSimWalkAway}
-                onPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-                  updateProximityEvaluation(-89);
-                }}
-                activeOpacity={0.7}
-              >
-                <Text style={styles.btnSimWalkAwayText}>🚶 Walk Away (-89 dBm)</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-        )}
-
-        {/* Collapsible Zone Calibration & Sliders */}
-        <TouchableOpacity
-          style={styles.calibToggleHeader}
-          onPress={() => setSmartKeySettingsOpen(!smartKeySettingsOpen)}
-          activeOpacity={0.7}
-        >
-          <Text style={styles.calibToggleText}>⚙️ Zone Calibration & Watchdog Timers</Text>
-          <Text style={styles.calibToggleIcon}>{smartKeySettingsOpen ? '▲' : '▼'}</Text>
-        </TouchableOpacity>
-
-        {smartKeySettingsOpen && (
-          <View style={styles.calibBody}>
-            {/* Entry Threshold Slider */}
-            <View style={styles.sliderHeader}>
-              <Text style={styles.controlLabel}>Entry Proximity (Turn ON)</Text>
-              <Text style={styles.calibValGreen}>{enterThreshold} dBm (~2m)</Text>
-            </View>
-            <Slider
-              style={styles.slider}
-              minimumValue={-85}
-              maximumValue={-55}
-              step={1}
-              value={enterThreshold}
+            <Switch
+              value={iBeaconAutoKey}
               onValueChange={(val) => {
-                setEnterThreshold(val);
-                enterThresholdRef.current = val;
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                setIBeaconAutoKey(val);
+                iBeaconAutoKeyRef.current = val;
+                if (val) {
+                  ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+                  setIBeaconStatus('Armed • Listening');
+                } else {
+                  ScooterBeacon.stopMonitoring();
+                  setIBeaconStatus('Disabled');
+                  setIBeaconProximity('unknown');
+                }
               }}
-              minimumTrackTintColor="#10b981"
-              maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-              thumbTintColor="#10b981"
-            />
-
-            {/* Exit Threshold Slider */}
-            <View style={styles.sliderHeader}>
-              <Text style={styles.controlLabel}>Exit Proximity (Turn OFF)</Text>
-              <Text style={styles.calibValRed}>{exitThreshold} dBm (~6-10m)</Text>
-            </View>
-            <Slider
-              style={styles.slider}
-              minimumValue={-95}
-              maximumValue={-70}
-              step={1}
-              value={exitThreshold}
-              onValueChange={(val) => {
-                setExitThreshold(val);
-                exitThresholdRef.current = val;
-              }}
-              minimumTrackTintColor="#f43f5e"
-              maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-              thumbTintColor="#f43f5e"
-            />
-
-            {/* Exit Delay Slider */}
-            <View style={styles.sliderHeader}>
-              <Text style={styles.controlLabel}>Exit Debounce Grace Delay</Text>
-              <Text style={styles.calibValAmber}>{exitDelaySec} Seconds</Text>
-            </View>
-            <Slider
-              style={styles.slider}
-              minimumValue={3}
-              maximumValue={30}
-              step={1}
-              value={exitDelaySec}
-              onValueChange={(val) => {
-                setExitDelaySec(val);
-                exitDelaySecRef.current = val;
-              }}
-              onSlidingComplete={(val) => {
-                sendAntisparkCmd(`TIMEOUT ${val}`);
-              }}
-              minimumTrackTintColor="#f59e0b"
-              maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-              thumbTintColor="#f59e0b"
+              trackColor={{ false: '#1e293b', true: '#00f2fe' }}
+              thumbColor={iBeaconAutoKey ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
             />
           </View>
-        )}
+
+          {/* iBeacon Real-Time Proximity Radar Pill */}
+          {iBeaconAutoKey && (
+            <View style={styles.ibeaconDetailsBox}>
+              <View style={styles.ibeaconDetailsRow}>
+                <View style={styles.ibeaconDetailPill}>
+                  <Text style={styles.ibeaconDetailPillLabel}>PROXIMITY</Text>
+                  <Text style={[
+                    styles.ibeaconDetailPillVal,
+                    (iBeaconProximity === 'immediate' || iBeaconProximity === 'near') && { color: '#00f2fe' }
+                  ]}>
+                    {iBeaconProximity === 'immediate'
+                      ? '🎯 IMMEDIATE (< 1m)'
+                      : iBeaconProximity === 'near'
+                      ? '🟢 NEAR (< 2m)'
+                      : iBeaconProximity === 'far'
+                      ? '🟡 FAR (> 2m)'
+                      : '⚪ SEARCHING'}
+                  </Text>
+                </View>
+
+                <View style={styles.ibeaconDetailPill}>
+                  <Text style={styles.ibeaconDetailPillLabel}>ACCURACY</Text>
+                  <Text style={styles.ibeaconDetailPillVal}>
+                    {iBeaconAccuracy !== null ? `±${iBeaconAccuracy}m` : '--'}
+                  </Text>
+                </View>
+
+                <View style={styles.ibeaconDetailPill}>
+                  <Text style={styles.ibeaconDetailPillLabel}>BEACON RSSI</Text>
+                  <Text style={styles.ibeaconDetailPillVal}>
+                    {iBeaconRssi !== null ? `${iBeaconRssi} dBm` : '-- dBm'}
+                  </Text>
+                </View>
+              </View>
+
+              {/* Sensitivity Selector */}
+              <View style={styles.sensitivityRow}>
+                <Text style={styles.sensitivityLabel}>Wake Sensitivity:</Text>
+                <View style={styles.sensitivityBtnGroup}>
+                  {(['immediate', 'near', 'far'] as const).map((s) => (
+                    <TouchableOpacity
+                      key={s}
+                      style={[
+                        styles.btnSensitivity,
+                        iBeaconSensitivity === s && styles.btnSensitivityActive
+                      ]}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                        setIBeaconSensitivity(s);
+                        iBeaconSensitivityRef.current = s;
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={[
+                        styles.btnSensitivityText,
+                        iBeaconSensitivity === s && styles.btnSensitivityTextActive
+                      ]}>
+                        {s === 'immediate' ? '< 1m' : s === 'near' ? '< 2m (Def)' : '< 4m'}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </View>
+
+              {/* Action & Status Row */}
+              <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 10, gap: 8 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flex: 1 }}>
+                  <Text style={{ color: '#94a3b8', fontSize: 11, fontWeight: '600' }}>iOS Auth:</Text>
+                  <View style={{
+                    backgroundColor: iBeaconAuthStatus === 'authorizedAlways' ? '#10b98120' : iBeaconAuthStatus === 'authorizedWhenInUse' ? '#f59e0b20' : '#ef444420',
+                    paddingHorizontal: 6,
+                    paddingVertical: 2,
+                    borderRadius: 4
+                  }}>
+                    <Text style={{
+                      color: iBeaconAuthStatus === 'authorizedAlways' ? '#10b981' : iBeaconAuthStatus === 'authorizedWhenInUse' ? '#f59e0b' : '#ef4444',
+                      fontSize: 10,
+                      fontWeight: '700'
+                    }}>
+                      {iBeaconAuthStatus === 'authorizedAlways' ? 'ALWAYS (Pocket OK)' : iBeaconAuthStatus === 'authorizedWhenInUse' ? 'WHILE USING' : iBeaconAuthStatus}
+                    </Text>
+                  </View>
+                </View>
+
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: '#00f2fe20',
+                    borderColor: '#00f2fe60',
+                    borderWidth: 1,
+                    borderRadius: 6,
+                    paddingVertical: 4,
+                    paddingHorizontal: 10,
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 4
+                  }}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    addConsole('[iBEACON] 🔄 Manual Re-Arm & Scan triggered');
+                    ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+                    setIBeaconStatus('Armed • Listening');
+                    scanAndConnectAntispark(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <Text style={{ color: '#00f2fe', fontSize: 11, fontWeight: '700' }}>🔄 Re-Arm & Scan</Text>
+                </TouchableOpacity>
+              </View>
+
+              {/* Manual Turn-Off Priority Banner */}
+              {manualOverrideOff && (
+                <View style={styles.manualOverrideBanner}>
+                  <Text style={styles.manualOverrideBannerText}>
+                    🛑 <Text style={{ fontWeight: '700' }}>Manual Turn OFF Active:</Text> Auto-ignition is paused because you manually turned off the scooter. Step away to re-arm automatically, or tap below to reconnect.
+                  </Text>
+                  <TouchableOpacity
+                    style={styles.manualOverrideResumeBtn}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                      manualOverrideOffRef.current = false;
+                      setManualOverrideOff(false);
+                      ScooterBeacon.setManualOverrideOff(false);
+                      scanAndConnectAntispark(true);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.manualOverrideResumeBtnText}>⚡ Re-Arm & Turn ON</Text>
+                  </TouchableOpacity>
+                </View>
+              )}
+
+              {/* Permission Helper Banner if not Always Allowed */}
+              {iBeaconAuthStatus !== 'authorizedAlways' && (
+                <TouchableOpacity
+                  style={styles.permissionAlertBox}
+                  onPress={async () => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    if (iBeaconAuthStatus === 'unavailable') {
+                      addConsole('[iBEACON] Native module unavailable. The app binary on device must be rebuilt.');
+                      Alert.alert(
+                        'Rebuild Required',
+                        'The iBeacon proximity engine requires compiling the native module. Please run:\nnpx expo run:ios\nto install the updated app binary on your iPhone.'
+                      );
+                    } else if (iBeaconAuthStatus === 'notDetermined' || iBeaconAuthStatus === 'unknown') {
+                      addConsole('[iBEACON] Requesting in-app Location permission...');
+                      ScooterBeacon.requestLocationPermission();
+                    } else if (iBeaconAuthStatus === 'authorizedWhenInUse') {
+                      addConsole('[iBEACON] Requesting Always authorization upgrade...');
+                      ScooterBeacon.requestAlwaysAuthorization();
+                    } else if (iBeaconAuthStatus === 'denied' || iBeaconAuthStatus === 'restricted') {
+                      try {
+                        await Linking.openSettings();
+                      } catch (_) {
+                        ScooterBeacon.requestLocationPermission();
+                      }
+                    } else {
+                      ScooterBeacon.requestLocationPermission();
+                    }
+                  }}
+                  activeOpacity={0.8}
+                >
+                  <Text style={styles.permissionAlertText}>
+                    {iBeaconAuthStatus === 'unavailable' ? (
+                      <>⚠️ <Text style={{ fontWeight: '700' }}>Native Module Not Compiled:</Text> App binary needs rebuilding with <Text style={{ fontWeight: '700' }}>npx expo run:ios</Text> to enable iBeacon proximity.</>
+                    ) : iBeaconAuthStatus === 'authorizedWhenInUse' ? (
+                      <>⚠️ <Text style={{ fontWeight: '700' }}>"Always Allow" Recommended:</Text> Currently "While Using". Tap here to upgrade to <Text style={{ fontWeight: '700' }}>"Always"</Text> for hands-free unlock while iPhone is locked in your pocket.</>
+                    ) : (
+                      <>⚠️ <Text style={{ fontWeight: '700' }}>Location Permission Required:</Text> Tap here to allow Location access for iBeacon auto-ignition.</>
+                    )}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
+
       </View>
     );
   };
@@ -1732,7 +1758,7 @@ export default function App() {
               isAntisparkConnected && styles.btnHeaderPowerActive,
               isAntisparkConnecting && styles.btnHeaderPowerConnecting,
             ]}
-            onPress={isAntisparkConnected ? disconnectAntispark : scanAndConnectAntispark}
+            onPress={isAntisparkConnected ? disconnectAntispark : () => scanAndConnectAntispark(true)}
             activeOpacity={0.8}
           >
             <View
@@ -3061,6 +3087,162 @@ const styles = StyleSheet.create({
   calibValAmber: {
     color: '#f59e0b',
     fontSize: 12,
+    fontWeight: '700',
+  },
+
+  // Apple iBeacon Card Styles
+  ibeaconCard: {
+    backgroundColor: 'rgba(0, 242, 254, 0.04)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.25)',
+    borderRadius: 14,
+    padding: 12,
+    gap: 10,
+  },
+  ibeaconHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  ibeaconTitle: {
+    color: '#00f2fe',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  ibeaconDesc: {
+    color: '#94a3b8',
+    fontSize: 10.5,
+    lineHeight: 14,
+    marginTop: 2,
+  },
+  beaconBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+  },
+  beaconBadgeActive: {
+    backgroundColor: 'rgba(0, 242, 254, 0.18)',
+    borderWidth: 1,
+    borderColor: '#00f2fe',
+  },
+  beaconBadgeInactive: {
+    backgroundColor: 'rgba(100, 116, 139, 0.15)',
+    borderWidth: 1,
+    borderColor: '#475569',
+  },
+  beaconBadgeText: {
+    color: '#00f2fe',
+    fontSize: 9,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  ibeaconDetailsBox: {
+    gap: 8,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(0, 242, 254, 0.12)',
+    paddingTop: 8,
+  },
+  ibeaconDetailsRow: {
+    flexDirection: 'row',
+    gap: 6,
+  },
+  ibeaconDetailPill: {
+    flex: 1,
+    backgroundColor: 'rgba(0, 0, 0, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 8,
+    paddingVertical: 5,
+    paddingHorizontal: 6,
+    alignItems: 'center',
+  },
+  ibeaconDetailPillLabel: {
+    color: '#64748b',
+    fontSize: 8.5,
+    fontWeight: '700',
+  },
+  ibeaconDetailPillVal: {
+    color: '#f8fafc',
+    fontSize: 10.5,
+    fontWeight: '800',
+    marginTop: 2,
+  },
+  sensitivityRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'rgba(0, 0, 0, 0.2)',
+    borderRadius: 8,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+  sensitivityLabel: {
+    color: '#94a3b8',
+    fontSize: 10.5,
+    fontWeight: '600',
+  },
+  sensitivityBtnGroup: {
+    flexDirection: 'row',
+    gap: 4,
+  },
+  btnSensitivity: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+  },
+  btnSensitivityActive: {
+    backgroundColor: '#00f2fe',
+  },
+  btnSensitivityText: {
+    color: '#94a3b8',
+    fontSize: 10,
+    fontWeight: '700',
+  },
+  btnSensitivityTextActive: {
+    color: '#070a12',
+    fontWeight: '800',
+  },
+  permissionAlertBox: {
+    backgroundColor: 'rgba(245, 158, 11, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(245, 158, 11, 0.35)',
+    borderRadius: 8,
+    padding: 8,
+  },
+  permissionAlertText: {
+    color: '#fbbf24',
+    fontSize: 10.5,
+    lineHeight: 14,
+  },
+  manualOverrideBanner: {
+    backgroundColor: 'rgba(239, 68, 68, 0.12)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.35)',
+    borderRadius: 8,
+    padding: 10,
+    marginVertical: 4,
+  },
+  manualOverrideBannerText: {
+    color: '#f87171',
+    fontSize: 11,
+    lineHeight: 15,
+  },
+  manualOverrideResumeBtn: {
+    marginTop: 8,
+    backgroundColor: 'rgba(239, 68, 68, 0.25)',
+    borderWidth: 1,
+    borderColor: 'rgba(239, 68, 68, 0.6)',
+    paddingVertical: 6,
+    paddingHorizontal: 12,
+    borderRadius: 6,
+    alignSelf: 'flex-start',
+  },
+  manualOverrideResumeBtnText: {
+    color: '#fca5a5',
+    fontSize: 11,
     fontWeight: '700',
   },
 });

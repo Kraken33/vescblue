@@ -13,8 +13,12 @@
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "Allow Scooter BLE to connect and sync telemetry with your electric scooter.",
         "NSBluetoothPeripheralUsageDescription": "Allow Scooter BLE to communicate with ESP32 scooter controller.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "Allow Scooter BLE to detect when you approach your scooter to automatically turn on power.",
+        "NSLocationAlwaysUsageDescription": "Allow Scooter BLE to detect when you approach your scooter to automatically turn on power.",
+        "NSLocationWhenInUseUsageDescription": "Allow Scooter BLE to monitor scooter proximity.",
         "UIBackgroundModes": [
-          "bluetooth-central"
+          "bluetooth-central",
+          "location"
         ]
       }
     },

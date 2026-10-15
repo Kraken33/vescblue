@@ -1,0 +1,8 @@
+{
+  "name": "scooter-beacon",
+  "platforms": ["apple"],
+  "apple": {
+    "modules": ["ScooterBeaconModule"],
+    "podspecPath": "ScooterBeacon.podspec"
+  }
+}

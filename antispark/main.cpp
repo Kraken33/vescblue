@@ -3,6 +3,7 @@
 #include <BLEServer.h>
 #include <BLEUtils.h>
 #include <BLE2902.h>
+#include <BLEBeacon.h>
 #include <Preferences.h>
 
 
@@ -11,14 +12,16 @@
 // =========================================================================
 #if defined(CONFIG_IDF_TARGET_ESP32C3) || defined(ARDUINO_ESP32C3_DEV)
   // ESP32-C3 has pins GPIO 0 to 21 (GPIO 23 does not exist on C3)
-  #define ANTISPARK_PIN   10   // General-purpose trigger pin on ESP32-C3
-  #define STATUS_LED_PIN  8    // Onboard Blue LED on ESP32-C3 SuperMini
-  #define LED_ACTIVE_LOW  true // SuperMini blue LED is active LOW (LOW = ON)
+  #define ANTISPARK_PIN      10   // Optocoupler Anode (+) trigger pin on ESP32-C3
+  #define ANTISPARK_GND_PIN  20   // Optocoupler Cathode (-) ground sink pin on ESP32-C3
+  #define STATUS_LED_PIN     8    // Onboard Blue LED on ESP32-C3 SuperMini
+  #define LED_ACTIVE_LOW     true // SuperMini blue LED is active LOW (LOW = ON)
 #else
   // Classic ESP32 (WROOM / WROVER)
-  #define ANTISPARK_PIN   23   // Primary trigger pin to antispark switch/relay
-  #define STATUS_LED_PIN  2    // Onboard ESP32 LED (blue) for bench visual verification
-  #define LED_ACTIVE_LOW  false// Classic ESP32 LED is active HIGH (HIGH = ON)
+  #define ANTISPARK_PIN      23   // Optocoupler Anode (+) trigger pin
+  #define ANTISPARK_GND_PIN  22   // Optocoupler Cathode (-) ground sink pin
+  #define STATUS_LED_PIN     2    // Onboard ESP32 LED (blue) for bench visual verification
+  #define LED_ACTIVE_LOW     false// Classic ESP32 LED is active HIGH (HIGH = ON)
 #endif
 
 // =========================================================================
@@ -29,6 +32,15 @@
 #define BLE_CTRL_UUID       "6e400011-b5a3-f393-e0a9-e50e24dcca9e"
 
 // =========================================================================
+// Apple iBeacon Configuration (Target: FDA50693-A4E2-4FB1-AFCF-C6EB07647825)
+// ESP32 BLEUUID reverses bytes on parse; passing byte-reversed string ensures
+// transmitted payload is the exact Big-Endian byte order required by iOS CoreLocation.
+#define IBEACON_UUID_STR    "25786407-ebc6-cfaf-b14f-e2a49306a5fd"
+#define IBEACON_MAJOR       1
+#define IBEACON_MINOR       1
+#define IBEACON_TX_POWER    -59 // Measured RSSI at 1m in dBm (0xC5)
+
+// =========================================================================
 // Global State & Watchdog
 // =========================================================================
 static BLEServer *pServer = nullptr;
@@ -36,12 +48,10 @@ static BLECharacteristic *pCtrlChar = nullptr;
 static Preferences prefs;
 
 static bool antisparkState = false;    // false = OFF (LOW), true = ON (HIGH)
-static bool autoWatchdog = true;       // Auto turn off when disconnected > timeout
-static uint32_t watchdogTimeoutSec = 10; // Grace period before disconnect cutoff (seconds)
+static bool beaconActive = true;       // false when manually turned OFF via app
 
 static bool isClientConnected = false;
 static bool oldClientConnected = false;
-static unsigned long disconnectTimestamp = 0;
 static unsigned long lastStatusNotify = 0;
 static unsigned long bootTimestamp = 0;
 
@@ -58,6 +68,7 @@ static inline void writeStatusLed(bool on) {
 void setAntisparkState(bool state, const char *reason);
 void notifyStatus();
 void handleCommand(const String &cmd);
+void updateAdvertising(bool enableBeacon);
 
 // =========================================================================
 // BLE Server Callbacks
@@ -65,16 +76,11 @@ void handleCommand(const String &cmd);
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *pServer) override {
     isClientConnected = true;
-    disconnectTimestamp = 0;
     Serial.println(F("[ANTISPARK] Phone connected via BLE"));
-
-    // Keyless ignition: Turn ON immediately when phone connects
-    setAntisparkState(true, "BLE Phone Connected");
   }
 
   void onDisconnect(BLEServer *pServer) override {
     isClientConnected = false;
-    disconnectTimestamp = 0;
     Serial.println(F("[ANTISPARK] Signal lost - turning Antispark OFF automatically"));
     setAntisparkState(false, "BLE Signal Lost (Auto-off)");
   }
@@ -99,12 +105,14 @@ class ControlCallbacks : public BLECharacteristicCallbacks {
 void setAntisparkState(bool state, const char *reason) {
   antisparkState = state;
   digitalWrite(ANTISPARK_PIN, antisparkState ? HIGH : LOW);
+  digitalWrite(ANTISPARK_GND_PIN, LOW); // Optocoupler Cathode (-) constant 0V sink
   writeStatusLed(antisparkState);
 
-  Serial.printf("[ANTISPARK] STATE -> %s (GPIO %d=%s, LED %d=%s) [Reason: %s]\n",
+  Serial.printf("[ANTISPARK] STATE -> %s (GPIO %d=%s, GPIO %d=LOW (0V), LED %d=%s) [Reason: %s]\n",
                 antisparkState ? "ON" : "OFF",
                 ANTISPARK_PIN,
                 antisparkState ? "HIGH (3.3V)" : "LOW (0V)",
+                ANTISPARK_GND_PIN,
                 STATUS_LED_PIN,
                 antisparkState ? "ON" : "OFF",
                 reason);
@@ -112,16 +120,14 @@ void setAntisparkState(bool state, const char *reason) {
   notifyStatus();
 }
 
-// Format and send status packet: "PWR=1 AUTO=1 TO=10 UP=42"
+// Format and send status packet: "PWR=1 UP=42"
 void notifyStatus() {
   if (!pCtrlChar || !isClientConnected) return;
 
   unsigned long uptimeSec = (millis() - bootTimestamp) / 1000;
   char buf[64];
-  snprintf(buf, sizeof(buf), "PWR=%d AUTO=%d TO=%u UP=%lu",
+  snprintf(buf, sizeof(buf), "PWR=%d UP=%lu",
            antisparkState ? 1 : 0,
-           autoWatchdog ? 1 : 0,
-           watchdogTimeoutSec,
            uptimeSec);
 
   pCtrlChar->setValue((uint8_t *)buf, strlen(buf));
@@ -135,25 +141,14 @@ void handleCommand(const String &cmd) {
   Serial.printf("[ANTISPARK] CMD received: '%s'\n", cmd.c_str());
 
   if (cmd.startsWith("PWR 1") || cmd.equalsIgnoreCase("ON")) {
+    beaconActive = true;
+    prefs.putBool("beacon", true);
     setAntisparkState(true, "BLE App Command");
   } 
   else if (cmd.startsWith("PWR 0") || cmd.equalsIgnoreCase("OFF")) {
+    beaconActive = false;
+    prefs.putBool("beacon", false);
     setAntisparkState(false, "BLE App Command");
-  } 
-  else if (cmd.startsWith("AUTO ")) {
-    autoWatchdog = (cmd.substring(5).toInt() > 0);
-    prefs.putBool("auto", autoWatchdog);
-    Serial.printf("[ANTISPARK] Auto-watchdog set to: %d\n", autoWatchdog);
-    notifyStatus();
-  } 
-  else if (cmd.startsWith("TIMEOUT ")) {
-    int to = cmd.substring(8).toInt();
-    if (to >= 1 && to <= 300) {
-      watchdogTimeoutSec = (uint32_t)to;
-      prefs.putUInt("timeout", watchdogTimeoutSec);
-      Serial.printf("[ANTISPARK] Watchdog timeout set to: %u s\n", watchdogTimeoutSec);
-    }
-    notifyStatus();
   } 
   else if (cmd.equalsIgnoreCase("STATUS") || cmd.equalsIgnoreCase("S")) {
     notifyStatus();
@@ -161,6 +156,53 @@ void handleCommand(const String &cmd) {
   else {
     Serial.printf("[ANTISPARK] Unknown command: '%s'\n", cmd.c_str());
   }
+}
+
+// =========================================================================
+// Dynamic Advertising Controller (Apple iBeacon vs Standard GATT Standby)
+// =========================================================================
+void updateAdvertising(bool enableBeacon) {
+  beaconActive = enableBeacon;
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->stop();
+  delay(50);
+  pAdvertising->reset();
+
+  pAdvertising->addServiceUUID(BLE_SVC_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinInterval(0x20); // 20ms
+  pAdvertising->setMaxInterval(0x40); // 40ms
+  pAdvertising->setMinPreferred(0x06); // 7.5ms preferred
+  pAdvertising->setMaxPreferred(0x12);
+
+  BLEAdvertisementData advData;
+  advData.setFlags(0x06); // 0x02 (LE General Discoverable) | 0x04 (BR/EDR Not Supported)
+
+  if (enableBeacon) {
+    BLEBeacon myBeacon;
+    myBeacon.setManufacturerId(0x4C00); // Apple Inc. (0x004C)
+    myBeacon.setMajor(IBEACON_MAJOR);
+    myBeacon.setMinor(IBEACON_MINOR);
+    myBeacon.setSignalPower(IBEACON_TX_POWER);
+    BLEUUID bleUUID(IBEACON_UUID_STR);
+    bleUUID = bleUUID.to128();
+    myBeacon.setProximityUUID(bleUUID);
+    advData.setManufacturerData(myBeacon.getData());
+    Serial.println(F("[ANTISPARK] BLE Advertising: Apple iBeacon ACTIVE"));
+  } else {
+    // When manually powered off: advertise Antispark Service UUID directly without iBeacon payload
+    advData.setCompleteServices(BLEUUID(BLE_SVC_UUID));
+    Serial.println(F("[ANTISPARK] BLE Advertising: iBeacon INACTIVE (Manual Standby)"));
+  }
+  pAdvertising->setAdvertisementData(advData);
+
+  // Scan Response Data: Device Name and Service UUID for iOS background scanning
+  BLEAdvertisementData respData;
+  respData.setName("Antispark");
+  respData.setCompleteServices(BLEUUID(BLE_SVC_UUID));
+  pAdvertising->setScanResponseData(respData);
+
+  pAdvertising->start();
 }
 
 // =========================================================================
@@ -176,26 +218,22 @@ void setup() {
 
   // Initialize GPIOs
   pinMode(ANTISPARK_PIN, OUTPUT);
+  pinMode(ANTISPARK_GND_PIN, OUTPUT);
   pinMode(STATUS_LED_PIN, OUTPUT);
 
   // Safe default: LOW (Antispark OFF, LED OFF)
   digitalWrite(ANTISPARK_PIN, LOW);
+  digitalWrite(ANTISPARK_GND_PIN, LOW);
   writeStatusLed(false);
 
   bootTimestamp = millis();
 
-  // Load preferences (always enable watchdog by default)
+  // Load preferences
   prefs.begin("antispark", false);
-  autoWatchdog = true;
-  prefs.putBool("auto", true);
-  watchdogTimeoutSec = prefs.getUInt("timeout", 10);
-  if (watchdogTimeoutSec < 1 || watchdogTimeoutSec > 300) {
-    watchdogTimeoutSec = 10;
-    prefs.putUInt("timeout", 10);
-  }
+  beaconActive = prefs.getBool("beacon", true);
 
-  Serial.printf("[ANTISPARK] Pins: Antispark=GPIO %d, LED=GPIO %d\n", ANTISPARK_PIN, STATUS_LED_PIN);
-  Serial.printf("[ANTISPARK] Config: AutoWatchdog=%d, Timeout=%us\n", autoWatchdog, watchdogTimeoutSec);
+  Serial.printf("[ANTISPARK] Pins: Antispark +=GPIO %d, Antispark -=GPIO %d, LED=GPIO %d\n", ANTISPARK_PIN, ANTISPARK_GND_PIN, STATUS_LED_PIN);
+  Serial.printf("[ANTISPARK] Config: Beacon=%d\n", beaconActive);
 
   // Initialize BLE
   BLEDevice::init(BLE_DEVICE_NAME);
@@ -217,12 +255,12 @@ void setup() {
 
   // Default initial status
   char initBuf[64];
-  snprintf(initBuf, sizeof(initBuf), "PWR=0 AUTO=%d TO=%u UP=0", autoWatchdog ? 1 : 0, watchdogTimeoutSec);
+  snprintf(initBuf, sizeof(initBuf), "PWR=0 UP=0");
   pCtrlChar->setValue((uint8_t *)initBuf, strlen(initBuf));
 
   pService->start();
 
-  // Start Fast BLE Advertising (20ms to 40ms intervals)
+  // Configure Fast BLE Advertising intervals
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
   pAdvertising->addServiceUUID(BLE_SVC_UUID);
   pAdvertising->setScanResponse(true);
@@ -231,17 +269,8 @@ void setup() {
   pAdvertising->setMinPreferred(0x06); // 7.5ms preferred
   pAdvertising->setMaxPreferred(0x12);
 
-  BLEAdvertisementData advData;
-  advData.setFlags(0x06);
-  advData.setCompleteServices(BLEUUID(BLE_SVC_UUID));
-  advData.setName(BLE_DEVICE_NAME);
-  pAdvertising->setAdvertisementData(advData);
-
-  BLEAdvertisementData respData;
-  respData.setName(BLE_DEVICE_NAME);
-  pAdvertising->setScanResponseData(respData);
-
-  BLEDevice::startAdvertising();
+  // Start initial advertising based on saved beaconActive state
+  updateAdvertising(beaconActive);
 
   // Visual boot signal: 3 fast blinks on onboard LED (Pin 8)
   for (int i = 0; i < 3; i++) {
@@ -251,7 +280,6 @@ void setup() {
     delay(100);
   }
 
-  Serial.println(F("[ANTISPARK] BLE Advertising started: 'Scooter-Antispark'"));
   Serial.println(F("[ANTISPARK] Ready. Output=LOW"));
 }
 
@@ -270,20 +298,15 @@ void loop() {
   if (!isClientConnected && oldClientConnected) {
     oldClientConnected = false;
     delay(100);
-    BLEDevice::startAdvertising();
-    Serial.println(F("[ANTISPARK] Resumed BLE Advertising after disconnect"));
+    updateAdvertising(beaconActive);
+    Serial.printf("[ANTISPARK] Resumed BLE Advertising after disconnect (iBeacon: %s)\n", beaconActive ? "ON" : "OFF");
   }
   // Handle new connection
   if (isClientConnected && !oldClientConnected) {
     oldClientConnected = true;
   }
 
-  // Advertising Liveness Watchdog: When disconnected, ensure advertising is actively broadcasting
-  static unsigned long lastAdvLiveness = 0;
-  if (!isClientConnected && (now - lastAdvLiveness >= 2000)) {
-    lastAdvLiveness = now;
-    BLEDevice::startAdvertising();
-  }
+
 
   // Standby Heartbeat: subtle blip every 2.5s when disconnected to indicate active BLE advertising
   static unsigned long lastHeartbeat = 0;

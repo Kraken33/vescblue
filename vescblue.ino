@@ -1,11 +1,11 @@
 #include <Arduino.h>
-#include <VescUart.h>
+#include <BLE2902.h>
 #include <BLEDevice.h>
 #include <BLEServer.h>
 #include <BLEUtils.h>
-#include <BLE2902.h>
-#include <Update.h>
 #include <Preferences.h>
+#include <Update.h>
+#include <VescUart.h>
 
 // =========================================================================
 // Hardware & CAN Pin Configuration
@@ -14,8 +14,10 @@
 
 // Default Brake Pin (GPIO 19 single pin default)
 int brakePin = 19; // Default GPIO 19 (Single brake pin)
-bool brakeActiveLow = true; // true = Active LOW (pulls to GND when brake engaged)
-bool brakeEnabled = true;   // Master software toggle to enable/disable e-brake sensor
+bool brakeActiveLow =
+    true; // true = Active LOW (pulls to GND when brake engaged)
+bool brakeEnabled =
+    true; // Master software toggle to enable/disable e-brake sensor
 
 // Display UART (UART1) on GPIO 22 (RX) and GPIO 23 (TX) at 1200 Baud
 #define PIN_DISPLAY_RX 22
@@ -50,16 +52,18 @@ struct DriveProfile {
 };
 
 // ERPM = speedKmH / 0.003191858
-const DriveProfile PROFILE_1          = { 10.0f,   3133.0f,  25.0f, "10 km/h (Eco)" };
-const DriveProfile PROFILE_2          = { 15.0f,   4699.0f,  40.0f, "15 km/h (City)" };
-const DriveProfile PROFILE_3_STANDARD = { 22.0f,   6892.0f,  65.0f, "22 km/h (Drive)" };
-const DriveProfile PROFILE_3_SHIFTED  = { 25.0f,   7832.0f,  65.0f, "25 km/h (Drive)" };
-const DriveProfile PROFILE_3          = { 22.0f,   6892.0f,  65.0f, "22 km/h (Drive)" };
-const DriveProfile PROFILE_S2         = { 25.0f,   7832.0f,  65.0f, "25 km/h (Drive)" };
-const DriveProfile PROFILE_S3         = { 40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)" };
+const DriveProfile PROFILE_1 = {10.0f, 3133.0f, 25.0f, "10 km/h (Eco)"};
+const DriveProfile PROFILE_2 = {15.0f, 4699.0f, 40.0f, "15 km/h (City)"};
+const DriveProfile PROFILE_3_STANDARD = {22.0f, 6892.0f, 65.0f,
+                                         "22 km/h (Drive)"};
+const DriveProfile PROFILE_3_SHIFTED = {25.0f, 7832.0f, 65.0f,
+                                        "25 km/h (Drive)"};
+const DriveProfile PROFILE_3 = {22.0f, 6892.0f, 65.0f, "22 km/h (Drive)"};
+const DriveProfile PROFILE_S2 = {25.0f, 7832.0f, 65.0f, "25 km/h (Drive)"};
+const DriveProfile PROFILE_S3 = {40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)"};
 
 // Tuning & Limits (Full authority regen braking)
-float userBrakeAmps = 25.0f;           // Strong default brake current in Amps
+float userBrakeAmps = 25.0f; // Strong default brake current in Amps
 
 // Throttle ADC calibration (Idle ~0.67V = 830 counts, Full ~3.0V = 3720 counts)
 const int THROTTLE_MIN_RAW = 950;  // Threshold above idle (~0.77V)
@@ -111,18 +115,20 @@ unsigned long lastVescByteTime = 0;
 // Display Protocol State & Encryption Table (1200 Baud)
 // =========================================================================
 static const uint8_t ENCODING_KEY_ARRAY[128] = {
-    0x5e, 0x23, 0x5c, 0x21, 0x2a, 0x2f, 0x28, 0x2d, 0x26, 0x2b, 0x24, 0x29, 0x52, 0x57, 0x50, 0x55,
-    0x4e, 0x53, 0x4c, 0x51, 0x5a, 0x5f, 0x58, 0x5d, 0x56, 0x5b, 0x54, 0x59, 0x02, 0x07, 0x00, 0x05,
-    0x3e, 0x03, 0x3c, 0x01, 0x0a, 0x0f, 0x08, 0x0d, 0x06, 0x0b, 0x04, 0x09, 0x32, 0x37, 0x30, 0x35,
-    0x2e, 0x33, 0x2c, 0x31, 0x3a, 0x3f, 0x38, 0x3d, 0x36, 0x3b, 0x34, 0x39, 0x62, 0x67, 0x60, 0x65,
-    0x1e, 0x63, 0x1c, 0x61, 0x6a, 0x6f, 0x68, 0x6d, 0x66, 0x6b, 0x64, 0x69, 0x12, 0x17, 0x10, 0x15,
-    0x0e, 0x13, 0x0c, 0x11, 0x1a, 0x1f, 0x18, 0x1d, 0x16, 0x1b, 0x14, 0x19, 0x42, 0x47, 0x40, 0x45,
-    0x7e, 0x43, 0x7c, 0x41, 0x4a, 0x4f, 0x48, 0x4d, 0x46, 0x4b, 0x44, 0x49, 0x72, 0x77, 0x70, 0x75,
-    0x6e, 0x73, 0x6c, 0x71, 0x7a, 0x7f, 0x78, 0x7d, 0x76, 0x7b, 0x74, 0x79, 0x22, 0x27, 0x20, 0x25
-};
+    0x5e, 0x23, 0x5c, 0x21, 0x2a, 0x2f, 0x28, 0x2d, 0x26, 0x2b, 0x24, 0x29,
+    0x52, 0x57, 0x50, 0x55, 0x4e, 0x53, 0x4c, 0x51, 0x5a, 0x5f, 0x58, 0x5d,
+    0x56, 0x5b, 0x54, 0x59, 0x02, 0x07, 0x00, 0x05, 0x3e, 0x03, 0x3c, 0x01,
+    0x0a, 0x0f, 0x08, 0x0d, 0x06, 0x0b, 0x04, 0x09, 0x32, 0x37, 0x30, 0x35,
+    0x2e, 0x33, 0x2c, 0x31, 0x3a, 0x3f, 0x38, 0x3d, 0x36, 0x3b, 0x34, 0x39,
+    0x62, 0x67, 0x60, 0x65, 0x1e, 0x63, 0x1c, 0x61, 0x6a, 0x6f, 0x68, 0x6d,
+    0x66, 0x6b, 0x64, 0x69, 0x12, 0x17, 0x10, 0x15, 0x0e, 0x13, 0x0c, 0x11,
+    0x1a, 0x1f, 0x18, 0x1d, 0x16, 0x1b, 0x14, 0x19, 0x42, 0x47, 0x40, 0x45,
+    0x7e, 0x43, 0x7c, 0x41, 0x4a, 0x4f, 0x48, 0x4d, 0x46, 0x4b, 0x44, 0x49,
+    0x72, 0x77, 0x70, 0x75, 0x6e, 0x73, 0x6c, 0x71, 0x7a, 0x7f, 0x78, 0x7d,
+    0x76, 0x7b, 0x74, 0x79, 0x22, 0x27, 0x20, 0x25};
 
-static const uint8_t ENCODED_BYTES[10] = { 3, 4, 5, 7, 8, 9, 10, 11, 12, 13 };
-static const uint8_t COMBO_KEY[7] = { 1, 2, 3, 2, 3, 2, 3 };
+static const uint8_t ENCODED_BYTES[10] = {3, 4, 5, 7, 8, 9, 10, 11, 12, 13};
+static const uint8_t COMBO_KEY[7] = {1, 2, 3, 2, 3, 2, 3};
 
 uint8_t displayRxBuffer[15];
 int displayRxIndex = 0;
@@ -141,7 +147,7 @@ bool lastLightState = false;
 bool profileSSwitch = false;
 bool secretComboUnlocked = false;
 bool gearShiftEnabled = false;
-uint8_t gearHistory[7] = { 1, 1, 1, 1, 1, 1, 1 };
+uint8_t gearHistory[7] = {1, 1, 1, 1, 1, 1, 1};
 
 // Cruise Control State
 bool cruiseControlEnabled = false;
@@ -208,14 +214,15 @@ void sendVescTempProfile(float maxErpm, float currentScale) {
   payload[ind++] = 0;  // ack = false
   payload[ind++] = 0;  // divide_by_controllers = false
 
-  buffer_append_float32_auto(payload, 1.0f, &ind);         // l_current_min_scale
-  buffer_append_float32_auto(payload, currentScale, &ind); // l_current_max_scale
-  buffer_append_float32_auto(payload, -maxErpm, &ind);     // l_min_erpm
-  buffer_append_float32_auto(payload, maxErpm, &ind);      // l_max_erpm
-  buffer_append_float32_auto(payload, 0.005f, &ind);       // l_min_duty
-  buffer_append_float32_auto(payload, 0.95f, &ind);        // l_max_duty
-  buffer_append_float32_auto(payload, -150000.0f, &ind);   // l_watt_min
-  buffer_append_float32_auto(payload, 150000.0f, &ind);    // l_watt_max
+  buffer_append_float32_auto(payload, 1.0f, &ind); // l_current_min_scale
+  buffer_append_float32_auto(payload, currentScale,
+                             &ind);                      // l_current_max_scale
+  buffer_append_float32_auto(payload, -maxErpm, &ind);   // l_min_erpm
+  buffer_append_float32_auto(payload, maxErpm, &ind);    // l_max_erpm
+  buffer_append_float32_auto(payload, 0.005f, &ind);     // l_min_duty
+  buffer_append_float32_auto(payload, 0.95f, &ind);      // l_max_duty
+  buffer_append_float32_auto(payload, -150000.0f, &ind); // l_watt_min
+  buffer_append_float32_auto(payload, 150000.0f, &ind);  // l_watt_max
 
   // 1. Send to Master VESC directly
   uint16_t crc = crc16_vesc(payload, ind);
@@ -247,16 +254,25 @@ void sendVescTempProfile(float maxErpm, float currentScale) {
 }
 
 void sendBrakeFlagToSlave(bool isBraking) {
-  if (slaveCanId == 0) return;
+  if (slaveCanId == 0)
+    return;
   uint8_t payload[5];
-  payload[0] = 34;  // COMM_FORWARD_CAN
+  payload[0] = 34; // COMM_FORWARD_CAN
   payload[1] = slaveCanId;
-  payload[2] = 36;  // COMM_CUSTOM_APP_DATA
+  payload[2] = 36;   // COMM_CUSTOM_APP_DATA
   payload[3] = 0x42; // tag: brake state
   payload[4] = isBraking ? 1 : 0;
   uint16_t crc = crc16_vesc(payload, 5);
-  uint8_t frame[10] = {0x02, 5, payload[0], payload[1], payload[2], payload[3], payload[4],
-                      (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF), 0x03};
+  uint8_t frame[10] = {0x02,
+                       5,
+                       payload[0],
+                       payload[1],
+                       payload[2],
+                       payload[3],
+                       payload[4],
+                       (uint8_t)(crc >> 8),
+                       (uint8_t)(crc & 0xFF),
+                       0x03};
   VescSerial.write(frame, sizeof(frame));
 }
 
@@ -271,8 +287,16 @@ void sendDualCurrent(float masterAmps, float slaveAmps) {
   mPayload[3] = (uint8_t)((masterMilliAmps >> 8) & 0xFF);
   mPayload[4] = (uint8_t)(masterMilliAmps & 0xFF);
   uint16_t mCrc = crc16_vesc(mPayload, 5);
-  uint8_t mFrame[10] = {0x02, 5, mPayload[0], mPayload[1], mPayload[2], mPayload[3], mPayload[4],
-                        (uint8_t)(mCrc >> 8), (uint8_t)(mCrc & 0xFF), 0x03};
+  uint8_t mFrame[10] = {0x02,
+                        5,
+                        mPayload[0],
+                        mPayload[1],
+                        mPayload[2],
+                        mPayload[3],
+                        mPayload[4],
+                        (uint8_t)(mCrc >> 8),
+                        (uint8_t)(mCrc & 0xFF),
+                        0x03};
   VescSerial.write(mFrame, 10);
 
   // 2. Forward to Slave VESC over CAN (7 bytes payload)
@@ -281,14 +305,24 @@ void sendDualCurrent(float masterAmps, float slaveAmps) {
     uint8_t sPayload[7];
     sPayload[0] = 34; // COMM_FORWARD_CAN
     sPayload[1] = slaveCanId;
-    sPayload[2] = 6;  // COMM_SET_CURRENT
+    sPayload[2] = 6; // COMM_SET_CURRENT
     sPayload[3] = (uint8_t)((slaveMilliAmps >> 24) & 0xFF);
     sPayload[4] = (uint8_t)((slaveMilliAmps >> 16) & 0xFF);
     sPayload[5] = (uint8_t)((slaveMilliAmps >> 8) & 0xFF);
     sPayload[6] = (uint8_t)(slaveMilliAmps & 0xFF);
     uint16_t sCrc = crc16_vesc(sPayload, 7);
-    uint8_t sFrame[12] = {0x02, 7, sPayload[0], sPayload[1], sPayload[2], sPayload[3], sPayload[4], sPayload[5], sPayload[6],
-                          (uint8_t)(sCrc >> 8), (uint8_t)(sCrc & 0xFF), 0x03};
+    uint8_t sFrame[12] = {0x02,
+                          7,
+                          sPayload[0],
+                          sPayload[1],
+                          sPayload[2],
+                          sPayload[3],
+                          sPayload[4],
+                          sPayload[5],
+                          sPayload[6],
+                          (uint8_t)(sCrc >> 8),
+                          (uint8_t)(sCrc & 0xFF),
+                          0x03};
     VescSerial.write(sFrame, 12);
   }
 }
@@ -303,8 +337,16 @@ void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
   mPayload[3] = (uint8_t)((masterMilliAmps >> 8) & 0xFF);
   mPayload[4] = (uint8_t)(masterMilliAmps & 0xFF);
   uint16_t mCrc = crc16_vesc(mPayload, 5);
-  uint8_t mFrame[10] = {0x02, 5, mPayload[0], mPayload[1], mPayload[2], mPayload[3], mPayload[4],
-                        (uint8_t)(mCrc >> 8), (uint8_t)(mCrc & 0xFF), 0x03};
+  uint8_t mFrame[10] = {0x02,
+                        5,
+                        mPayload[0],
+                        mPayload[1],
+                        mPayload[2],
+                        mPayload[3],
+                        mPayload[4],
+                        (uint8_t)(mCrc >> 8),
+                        (uint8_t)(mCrc & 0xFF),
+                        0x03};
   VescSerial.write(mFrame, 10);
 
   if (slaveCanId > 0) {
@@ -312,14 +354,24 @@ void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
     uint8_t sPayload[7];
     sPayload[0] = 34; // COMM_FORWARD_CAN
     sPayload[1] = slaveCanId;
-    sPayload[2] = 7;  // COMM_SET_CURRENT_BRAKE
+    sPayload[2] = 7; // COMM_SET_CURRENT_BRAKE
     sPayload[3] = (uint8_t)((slaveMilliAmps >> 24) & 0xFF);
     sPayload[4] = (uint8_t)((slaveMilliAmps >> 16) & 0xFF);
     sPayload[5] = (uint8_t)((slaveMilliAmps >> 8) & 0xFF);
     sPayload[6] = (uint8_t)(slaveMilliAmps & 0xFF);
     uint16_t sCrc = crc16_vesc(sPayload, 7);
-    uint8_t sFrame[12] = {0x02, 7, sPayload[0], sPayload[1], sPayload[2], sPayload[3], sPayload[4], sPayload[5], sPayload[6],
-                          (uint8_t)(sCrc >> 8), (uint8_t)(sCrc & 0xFF), 0x03};
+    uint8_t sFrame[12] = {0x02,
+                          7,
+                          sPayload[0],
+                          sPayload[1],
+                          sPayload[2],
+                          sPayload[3],
+                          sPayload[4],
+                          sPayload[5],
+                          sPayload[6],
+                          (uint8_t)(sCrc >> 8),
+                          (uint8_t)(sCrc & 0xFF),
+                          0x03};
     VescSerial.write(sFrame, 12);
   }
 }
@@ -328,7 +380,8 @@ void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
 void requestVescTelemetryAsync() {
   uint8_t payload = 4; // COMM_GET_VALUES
   uint16_t crc = crc16_vesc(&payload, 1);
-  uint8_t frame[6] = {0x02, 1, 4, (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF), 0x03};
+  uint8_t frame[6] = {0x02, 1, 4, (uint8_t)(crc >> 8), (uint8_t)(crc & 0xFF),
+                      0x03};
   VescSerial.write(frame, 6);
 }
 
@@ -344,30 +397,35 @@ void processVescIncoming() {
     lastVescByteTime = now;
 
     if (vescRxIdx == 0) {
-      if (b == 0x02) vescRxBuf[vescRxIdx++] = b;
+      if (b == 0x02)
+        vescRxBuf[vescRxIdx++] = b;
     } else if (vescRxIdx == 1) {
       vescRxBuf[vescRxIdx++] = b; // Payload length
     } else {
       vescRxBuf[vescRxIdx++] = b;
       int payloadLen = vescRxBuf[1];
-      int totalFrameLen = 2 + payloadLen + 3; // header(2) + payload + crc(2) + end(1)
+      int totalFrameLen =
+          2 + payloadLen + 3; // header(2) + payload + crc(2) + end(1)
 
       if (vescRxIdx >= totalFrameLen && totalFrameLen <= 256) {
         if (vescRxBuf[totalFrameLen - 1] == 0x03) {
           uint16_t expectedCrc = crc16_vesc(&vescRxBuf[2], payloadLen);
-          uint16_t receivedCrc = ((uint16_t)vescRxBuf[2 + payloadLen] << 8) | vescRxBuf[2 + payloadLen + 1];
+          uint16_t receivedCrc = ((uint16_t)vescRxBuf[2 + payloadLen] << 8) |
+                                 vescRxBuf[2 + payloadLen + 1];
 
-          if (expectedCrc == receivedCrc && vescRxBuf[2] == 4 && payloadLen >= 27) {
+          if (expectedCrc == receivedCrc && vescRxBuf[2] == 4 &&
+              payloadLen >= 27) {
             // Unpack ERPM (bytes 23-26 in COMM_GET_VALUES payload)
             // Payload starts at vescRxBuf[2], so ERPM is at index 2 + 23 = 25
             int32_t erpm = ((int32_t)vescRxBuf[25] << 24) |
                            ((int32_t)vescRxBuf[26] << 16) |
-                           ((int32_t)vescRxBuf[27] << 8)  |
+                           ((int32_t)vescRxBuf[27] << 8) |
                            ((int32_t)vescRxBuf[28]);
             vescRpm57 = (float)erpm;
             vehicleSpeedMps = fabs(vescRpm57) * ERPM_TO_MPS;
             vehicleSpeedKmH = fabs(vescRpm57) * ERPM_TO_KMH;
-            kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
+            kickBlocked =
+                (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
           }
         }
         vescRxIdx = 0;
@@ -381,7 +439,9 @@ void updateKickStartForGear() {
   if (isZeroStart) {
     KICK_RPM_ERPM = 0.0f; // 4th gear (Sport): Zero start
   } else {
-    KICK_RPM_ERPM = (kickErpmThreshold > 0.0f) ? kickErpmThreshold : DEFAULT_KICK_ERPM; // 1st, 2nd, 3rd gears: Kick start
+    KICK_RPM_ERPM = (kickErpmThreshold > 0.0f)
+                        ? kickErpmThreshold
+                        : DEFAULT_KICK_ERPM; // 1st, 2nd, 3rd gears: Kick start
   }
   kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
 }
@@ -392,12 +452,15 @@ void updateActiveProfile() {
   } else if (currentGear == 2) {
     activeProfile = PROFILE_2;
   } else if (currentGear == 3) {
-    activeProfile = (gearShiftEnabled && bleClientConnected) ? PROFILE_3_SHIFTED : PROFILE_3_STANDARD;
+    activeProfile = (gearShiftEnabled && bleClientConnected)
+                        ? PROFILE_3_SHIFTED
+                        : PROFILE_3_STANDARD;
   } else if (currentGear >= 4) {
     activeProfile = PROFILE_S3;
   }
   updateKickStartForGear();
-  // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both VESCs
+  // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both
+  // VESCs
   sendVescTempProfile(activeProfile.maxErpm, 1.0f);
 }
 
@@ -411,7 +474,8 @@ void setGear(int newGear) {
   gearHistory[6] = (uint8_t)currentGear;
 
   if (currentGear < 4) {
-    // Leaving 4th gear (or operating in gears 1..3) immediately locks 4th gear / S-mode
+    // Leaving 4th gear (or operating in gears 1..3) immediately locks 4th gear
+    // / S-mode
     secretComboUnlocked = false;
     profileSSwitch = false;
   } else {
@@ -427,29 +491,36 @@ void setGear(int newGear) {
   updateActiveProfile();
 
   char gbuf[140];
-  snprintf(gbuf, sizeof(gbuf), "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A, %s)",
-           currentGear, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps,
+  snprintf(gbuf, sizeof(gbuf),
+           "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A, %s)",
+           currentGear, activeProfile.name, activeProfile.speedLimitKmH,
+           activeProfile.maxCurrentAmps,
            (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
   blePushLine(String(gbuf));
 }
 
 int getDisplayGear(int raw) {
-  if (raw == 5 || raw == 1) return 1;
-  if (raw == 10 || raw == 2) return 2;
-  if (raw == 15 || raw == 3) return 3;
-  if (raw == 20 || raw == 4) return 4;
+  if (raw == 5 || raw == 1)
+    return 1;
+  if (raw == 10 || raw == 2)
+    return 2;
+  if (raw == 15 || raw == 3)
+    return 3;
+  if (raw == 20 || raw == 4)
+    return 4;
   return constrain(raw, 1, 3);
 }
 
 int calculateMappedGear(int raw) {
   int dispGear = getDisplayGear(raw);
   if (bleClientConnected && gearShiftEnabled) {
-    // Gear shift mode: Display 1 -> Gear 2, Display 2 -> Gear 3, Display 3 -> Gear 4 (Sport, unlocked by default)
+    // Gear shift mode: Display 1 -> Gear 2, Display 2 -> Gear 3, Display 3 ->
+    // Gear 4 (Sport, unlocked by default)
     int shifted = dispGear + 1;
     return constrain(shifted, 2, 4);
   } else {
-    // Normal mode: Display 1 -> Gear 1, Display 2 -> Gear 2, Display 3 -> Gear 3
-    // Gear 4 locked unless secret combo unlocked
+    // Normal mode: Display 1 -> Gear 1, Display 2 -> Gear 2, Display 3 -> Gear
+    // 3 Gear 4 locked unless secret combo unlocked
     int g = constrain(dispGear, 1, 4);
     if (!secretComboUnlocked && g > 3) {
       g = 3;
@@ -492,12 +563,16 @@ void handleDisplayRxPacket(const uint8_t *packet) {
 }
 
 uint16_t calculateDisplaySpeed(float speedMps) {
-  if (speedMps <= 0.05f) return 0;
-  float wheelCircumferenceMeters = P06_WHEEL_DIAMETER_INCH * 3.14159265f * 0.0254f;
+  if (speedMps <= 0.05f)
+    return 0;
+  float wheelCircumferenceMeters =
+      P06_WHEEL_DIAMETER_INCH * 3.14159265f * 0.0254f;
   float rotationsPerSec = speedMps / wheelCircumferenceMeters;
   float displaySpeed = P07_MAGNET_POLES * rotationsPerSec * SPEED_CALC_FACTOR;
-  if (displaySpeed < 0) displaySpeed = 0;
-  if (displaySpeed > 65535.0f) displaySpeed = 65535.0f;
+  if (displaySpeed < 0)
+    displaySpeed = 0;
+  if (displaySpeed > 65535.0f)
+    displaySpeed = 65535.0f;
   return (uint16_t)displaySpeed;
 }
 
@@ -595,42 +670,68 @@ void blePushLine(const String &line) {
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
     char buf[280];
-    const char *ccStatus = !cruiseControlEnabled ? "0" : (currentGear >= 4 ? "G4" : (cruiseControlActive ? "ACTIVE" : "1"));
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s LIM=%.0fkm/h KICK=%s(%.0f) GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s BC=%.1fA CAN=%d",
+    const char *ccStatus =
+        !cruiseControlEnabled
+            ? "0"
+            : (currentGear >= 4 ? "G4"
+                                : (cruiseControlActive ? "ACTIVE" : "1"));
+    snprintf(buf, sizeof(buf),
+             "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
+             "LIM=%.0fkm/h KICK=%s(%.0f) GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
+             "BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, activeProfile.name, activeProfile.speedLimitKmH,
+             currentVoltageReading, currentRawThrottle,
+             debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
+             activeProfile.name, activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
              (gearShiftEnabled && bleClientConnected) ? 1 : 0, ccStatus,
-             digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH", userBrakeAmps, slaveCanId);
+             digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH",
+             userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd == "GS" || cmd == "GSHIFT") {
-    blePushLine("GSHIFT is " + String((gearShiftEnabled && bleClientConnected) ? "ON (Display: 1->G2, 2->G3, 3->G4)" : "OFF (Display: 1->G1, 2->G2, 3->G3)"));
+    blePushLine("GSHIFT is " +
+                String((gearShiftEnabled && bleClientConnected)
+                           ? "ON (Display: 1->G2, 2->G3, 3->G4)"
+                           : "OFF (Display: 1->G1, 2->G2, 3->G3)"));
   } else if (cmd.startsWith("GSHIFT ") || cmd.startsWith("GS ")) {
     int val = 0;
-    if (cmd.startsWith("GSHIFT ")) val = cmd.substring(7).toInt();
-    else val = cmd.substring(3).toInt();
+    if (cmd.startsWith("GSHIFT "))
+      val = cmd.substring(7).toInt();
+    else
+      val = cmd.substring(3).toInt();
     gearShiftEnabled = (val != 0);
     prefs.putBool("gear_shift", gearShiftEnabled);
     if (!gearShiftEnabled) {
       secretComboUnlocked = false;
     }
     applyGearShiftState();
-    blePushLine("GSHIFT set to " + String((gearShiftEnabled && bleClientConnected) ? "ON (Gears 2-4, G4 unlocked)" : "OFF (Gears 1-3, G4 locked)"));
+    blePushLine("GSHIFT set to " +
+                String((gearShiftEnabled && bleClientConnected)
+                           ? "ON (Gears 2-4, G4 unlocked)"
+                           : "OFF (Gears 1-3, G4 locked)"));
   } else if (cmd == "CC" || cmd == "CRUISE") {
-    const char *stateStr = !cruiseControlEnabled ? "DISABLED" : (currentGear >= 4 ? "SUSPENDED (G4)" : (cruiseControlActive ? "ENGAGED" : "ARMED"));
+    const char *stateStr =
+        !cruiseControlEnabled
+            ? "DISABLED"
+            : (currentGear >= 4 ? "SUSPENDED (G4)"
+                                : (cruiseControlActive ? "ENGAGED" : "ARMED"));
     blePushLine("CRUISE is " + String(stateStr));
   } else if (cmd.startsWith("CC ") || cmd.startsWith("CRUISE ")) {
     int val = 0;
-    if (cmd.startsWith("CC ")) val = cmd.substring(3).toInt();
-    else val = cmd.substring(7).toInt();
+    if (cmd.startsWith("CC "))
+      val = cmd.substring(3).toInt();
+    else
+      val = cmd.substring(7).toInt();
     cruiseControlEnabled = (val != 0);
     prefs.putBool("cruise_en", cruiseControlEnabled);
     if (!cruiseControlEnabled) {
       cruiseControlActive = false;
       cruiseTopSpeedStartTime = 0;
     }
-    const char *stateStr = !cruiseControlEnabled ? "DISABLED" : (currentGear >= 4 ? "ARMED (Suspended in G4)" : "ARMED");
+    const char *stateStr =
+        !cruiseControlEnabled
+            ? "DISABLED"
+            : (currentGear >= 4 ? "ARMED (Suspended in G4)" : "ARMED");
     blePushLine("CRUISE set to " + String(stateStr));
   } else if (cmd.startsWith("BEN ")) {
     int en = cmd.substring(4).toInt();
@@ -644,7 +745,8 @@ void bleHandleCommand(const String &cmd) {
       lastSentBrakeState = false;
       sendDualCurrent(0.0f, 0.0f);
     }
-    blePushLine("BRAKE SENSOR " + String(brakeEnabled ? "ENABLED" : "DISABLED"));
+    blePushLine("BRAKE SENSOR " +
+                String(brakeEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
     if (g >= 1 && g <= 4) {
@@ -653,8 +755,10 @@ void bleHandleCommand(const String &cmd) {
       }
       setGear(g);
       char pbuf[140];
-      snprintf(pbuf, sizeof(pbuf), "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s)",
-               g, activeProfile.name, activeProfile.speedLimitKmH, activeProfile.maxErpm, activeProfile.maxCurrentAmps,
+      snprintf(pbuf, sizeof(pbuf),
+               "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s)", g,
+               activeProfile.name, activeProfile.speedLimitKmH,
+               activeProfile.maxErpm, activeProfile.maxCurrentAmps,
                (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
       blePushLine(String(pbuf));
     } else {
@@ -689,7 +793,9 @@ void bleHandleCommand(const String &cmd) {
     } else {
       pinMode(21, INPUT_PULLDOWN);
     }
-    blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow ? "Active LOW (GND)" : "Active HIGH (3.3V)"));
+    blePushLine("BRAKE POLARITY set to " + String(brakeActiveLow
+                                                      ? "Active LOW (GND)"
+                                                      : "Active HIGH (3.3V)"));
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
     if (bc >= 0.0f && bc <= 60.0f) {
@@ -718,19 +824,23 @@ void bleHandleCommand(const String &cmd) {
     testModeActive = true;
     testVoltage = constrain(v, 0.5, 3.3);
     testBrakeState = (b != 0);
-    blePushLine("TEST on V=" + String(testVoltage, 2) + " B=" + String(testBrakeState ? 1 : 0));
+    blePushLine("TEST on V=" + String(testVoltage, 2) +
+                " B=" + String(testBrakeState ? 1 : 0));
   } else if (cmd.startsWith("K ")) {
     float k = cmd.substring(2).toFloat();
     if (k >= 0 && k < 5000) {
       kickErpmThreshold = k;
       prefs.putFloat("kick_th", kickErpmThreshold);
       updateKickStartForGear();
-      blePushLine("KICK threshold set to " + String(kickErpmThreshold, 0) + " (Active: " + String(KICK_RPM_ERPM, 0) + ")");
+      blePushLine("KICK threshold set to " + String(kickErpmThreshold, 0) +
+                  " (Active: " + String(KICK_RPM_ERPM, 0) + ")");
     } else {
       blePushLine("ERR kick range 0..5000");
     }
   } else if (cmd == "K") {
-    blePushLine("KICK Active: " + String(KICK_RPM_ERPM, 0) + " ERPM (" + ((KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start") + ", threshold=" + String(kickErpmThreshold, 0) + ")");
+    blePushLine("KICK Active: " + String(KICK_RPM_ERPM, 0) + " ERPM (" +
+                ((KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start") +
+                ", threshold=" + String(kickErpmThreshold, 0) + ")");
   } else if (cmd == "B") {
     sendBrakeFlagToSlave(debouncedBrakeState);
     lastSentBrakeState = debouncedBrakeState;
@@ -751,7 +861,10 @@ void bleHandleCommand(const String &cmd) {
     delay(300);
     ESP.restart();
   } else if (cmd == "?") {
-    blePushLine("S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] cruise | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC [amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
+    blePushLine(
+        "S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] "
+        "cruise | BEN [0/1] brake-en | BP [19/21/0] pin | BPOL [0/1] pol | BC "
+        "[amps] brake | CAN [id] | T [v b] test | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -761,7 +874,8 @@ class ConsoleCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) {
     String v = String((const char *)c->getData(), c->getLength());
     v.trim();
-    if (v.length() == 0) return;
+    if (v.length() == 0)
+      return;
     if (v.startsWith("OTA:BEGIN:")) {
       bleOtaExpected = v.substring(10).toInt();
       bleOtaReceived = 0;
@@ -792,9 +906,11 @@ class ConsoleCallbacks : public BLECharacteristicCallbacks {
 
 class OtaCallbacks : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) {
-    if (!bleOtaActive) return;
+    if (!bleOtaActive)
+      return;
     size_t n = c->getLength();
-    if (n == 0) return;
+    if (n == 0)
+      return;
     if (Update.write((uint8_t *)c->getData(), n) != n) {
       blePushLine("OTA:ERROR write-failed");
       Update.abort();
@@ -826,11 +942,13 @@ void bleInit() {
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
   BLEService *svc = bleServer->createService(BLE_SVC_UUID);
-  bleConsole = svc->createCharacteristic(
-      BLE_CONSOLE_UUID, BLECharacteristic::PROPERTY_NOTIFY | BLECharacteristic::PROPERTY_WRITE);
+  bleConsole = svc->createCharacteristic(BLE_CONSOLE_UUID,
+                                         BLECharacteristic::PROPERTY_NOTIFY |
+                                             BLECharacteristic::PROPERTY_WRITE);
   bleConsole->addDescriptor(new BLE2902());
   bleConsole->setCallbacks(new ConsoleCallbacks());
-  bleOta = svc->createCharacteristic(BLE_OTA_UUID, BLECharacteristic::PROPERTY_WRITE);
+  bleOta = svc->createCharacteristic(BLE_OTA_UUID,
+                                     BLECharacteristic::PROPERTY_WRITE);
   bleOta->setCallbacks(new OtaCallbacks());
   svc->start();
   BLEAdvertising *adv = BLEDevice::getAdvertising();
@@ -857,7 +975,7 @@ void setup() {
   }
   gearShiftEnabled = prefs.getBool("gear_shift", true);
   cruiseControlEnabled = prefs.getBool("cruise_en", false);
-  brakePin = prefs.getInt("brake_pin", 19);           // Default 19 (Single brake pin)
+  brakePin = prefs.getInt("brake_pin", 19); // Default 19 (Single brake pin)
   if (brakePin == 0) {
     // Migrate 0 to single GPIO 19 because GPIO 21 is floating/unconnected
     brakePin = 19;
@@ -865,14 +983,16 @@ void setup() {
   }
   brakeActiveLow = prefs.getBool("brake_low", true); // Default Active LOW
   brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
-  userBrakeAmps = prefs.getFloat("brake_amps", 25.0f);// Default 25A strong e-brake
-  slaveCanId = prefs.getUChar("can_slave", 61);      // Default CAN ID 61
+  userBrakeAmps =
+      prefs.getFloat("brake_amps", 25.0f);      // Default 25A strong e-brake
+  slaveCanId = prefs.getUChar("can_slave", 61); // Default CAN ID 61
 
   // Set internal pullup/pulldown on configured brake pin
   if (brakePin > 0) {
     pinMode(brakePin, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
     if (brakePin != 21) {
-      pinMode(21, INPUT_PULLDOWN); // Pull down unused GPIO 21 to stop floating EMI
+      pinMode(21,
+              INPUT_PULLDOWN); // Pull down unused GPIO 21 to stop floating EMI
     }
   } else {
     pinMode(19, brakeActiveLow ? INPUT_PULLUP : INPUT_PULLDOWN);
@@ -932,7 +1052,8 @@ void loop() {
           }
         }
 
-        // Active after sustained continuous signal (BRAKE_FILTER_SAMPLES * 4ms = 20ms)
+        // Active after sustained continuous signal (BRAKE_FILTER_SAMPLES * 4ms
+        // = 20ms)
         if (brakeFilterCount >= BRAKE_FILTER_SAMPLES) {
           debouncedBrakeState = true;
         } else if (brakeFilterCount == 0) {
@@ -971,18 +1092,25 @@ void loop() {
   }
 
   // 6b. Top-Speed Cruise Control Detection
-  // Activates only in Gears 1-3 when cruise is armed, brake is released, and kick is passed.
-  // Requires holding speed within +/- 2.0 km/h of profile top speed continuously for 5.0 seconds.
-  if (cruiseControlEnabled && currentGear < 4 && !debouncedBrakeState && !kickBlocked && !testModeActive) {
-    float minCruiseSpeed = activeProfile.speedLimitKmH - CRUISE_SPEED_TOLERANCE_KMH;
-    float maxCruiseSpeed = activeProfile.speedLimitKmH + CRUISE_SPEED_TOLERANCE_KMH;
+  // Activates only in Gears 1-3 when cruise is armed, brake is released, and
+  // kick is passed. Requires holding speed within +/- 2.0 km/h of profile top
+  // speed continuously for 5.0 seconds.
+  if (cruiseControlEnabled && currentGear < 4 && !debouncedBrakeState &&
+      !kickBlocked && !testModeActive) {
+    float minCruiseSpeed =
+        activeProfile.speedLimitKmH - CRUISE_SPEED_TOLERANCE_KMH;
+    float maxCruiseSpeed =
+        activeProfile.speedLimitKmH + CRUISE_SPEED_TOLERANCE_KMH;
 
-    if (vehicleSpeedKmH >= minCruiseSpeed && vehicleSpeedKmH <= maxCruiseSpeed) {
+    if (vehicleSpeedKmH >= minCruiseSpeed &&
+        vehicleSpeedKmH <= maxCruiseSpeed) {
       if (cruiseTopSpeedStartTime == 0) {
         cruiseTopSpeedStartTime = now;
-      } else if (!cruiseControlActive && (now - cruiseTopSpeedStartTime >= CRUISE_HOLD_DURATION_MS)) {
+      } else if (!cruiseControlActive &&
+                 (now - cruiseTopSpeedStartTime >= CRUISE_HOLD_DURATION_MS)) {
         cruiseControlActive = true;
-        blePushLine("CRUISE: ENGAGED at " + String(vehicleSpeedKmH, 1) + " km/h");
+        blePushLine("CRUISE: ENGAGED at " + String(vehicleSpeedKmH, 1) +
+                    " km/h");
       }
     } else {
       if (!cruiseControlActive) {
@@ -995,7 +1123,8 @@ void loop() {
     }
   }
 
-  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & full authority braking
+  // 7. Dispatch Motor Current at 50 Hz (every 20ms) with zero lag & full
+  // authority braking
   if (now - lastMotorCmdTime >= 20) {
     lastMotorCmdTime = now;
 
@@ -1008,7 +1137,8 @@ void loop() {
     }
 
     if (debouncedBrakeState) {
-      // Full brake priority: Throttle is completely deactivated and cruise control cancels!
+      // Full brake priority: Throttle is completely deactivated and cruise
+      // control cancels!
       if (cruiseControlActive) {
         cruiseControlActive = false;
         cruiseTopSpeedStartTime = 0;
@@ -1037,11 +1167,13 @@ void loop() {
         brakeReleaseFrames--;
         targetAmps = 0.0f;
         // Clean 0A current cancels VESC brake mode and enters freewheel/coast.
-        // Never send sendDualBrakeCurrent(0, 0) on release as that locks low-side FETs!
+        // Never send sendDualBrakeCurrent(0, 0) on release as that locks
+        // low-side FETs!
         sendDualCurrent(0.0f, 0.0f);
       } else if (cruiseControlActive && currentGear < 4) {
-        // Cruise Control Active: Physical throttle is ignored, send maximum current for current gear!
-        // VESC native speed limiter profile limits motor RPM cleanly at the gear's top speed.
+        // Cruise Control Active: Physical throttle is ignored, send maximum
+        // current for current gear! VESC native speed limiter profile limits
+        // motor RPM cleanly at the gear's top speed.
         targetAmps = activeProfile.maxCurrentAmps;
         sendDualCurrent(targetAmps, targetAmps);
       } else if (rawRatio > 0.01f) {
@@ -1058,11 +1190,18 @@ void loop() {
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
     char buf[180];
-    const char *ccStatus = !cruiseControlEnabled ? "0" : (currentGear >= 4 ? "G4" : (cruiseControlActive ? "ACTIVE" : "1"));
-    snprintf(buf, sizeof(buf), "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s",
-             vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0,
-             targetAmps, kickBlocked ? "HELD" : "ROLL", ccStatus);
+    const char *ccStatus =
+        !cruiseControlEnabled
+            ? "0"
+            : (currentGear >= 4 ? "G4"
+                                : (cruiseControlActive ? "ACTIVE" : "1"));
+    snprintf(
+        buf, sizeof(buf),
+        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s",
+        vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
+        currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
+        brakeEnabled ? 1 : 0, targetAmps, kickBlocked ? "HELD" : "ROLL",
+        ccStatus);
     blePushLine(String(buf));
   }
 
