@@ -59,15 +59,23 @@ struct DriveProfile {
 };
 
 // ERPM = speedKmH / 0.003191858
-const DriveProfile PROFILE_1 = {10.0f, 3133.0f, 25.0f, "10 km/h (Eco)"};
-const DriveProfile PROFILE_2 = {15.0f, 4699.0f, 40.0f, "15 km/h (City)"};
-const DriveProfile PROFILE_3_STANDARD = {22.0f, 6892.0f, 65.0f,
-                                         "22 km/h (Drive)"};
-const DriveProfile PROFILE_3_SHIFTED = {25.0f, 7832.0f, 65.0f,
-                                        "25 km/h (Drive)"};
-const DriveProfile PROFILE_3 = {22.0f, 6892.0f, 65.0f, "22 km/h (Drive)"};
-const DriveProfile PROFILE_S2 = {25.0f, 7832.0f, 65.0f, "25 km/h (Drive)"};
-const DriveProfile PROFILE_S3 = {40.0f, 100000.0f, 120.0f, "40+ km/h (Sport)"};
+// Locked Profiles (Unlock Disabled: 5, 15, 20 km/h)
+const DriveProfile PROFILE_1_LOCKED = {5.0f, 1566.0f, 25.0f, "5 km/h (Eco Lock)"};
+const DriveProfile PROFILE_2_LOCKED = {15.0f, 4700.0f, 40.0f, "15 km/h (City)"};
+const DriveProfile PROFILE_3_LOCKED = {20.0f, 6266.0f, 65.0f, "20 km/h (Legal Drive)"};
+
+// Unlocked Profiles (Unlock Enabled: 25 km/h, Unlimited)
+const DriveProfile PROFILE_2_UNLOCKED = {25.0f, 7832.0f, 65.0f, "25 km/h (Drive Unlocked)"};
+const DriveProfile PROFILE_3_UNLOCKED = {40.0f, 100000.0f, 120.0f, "Unlimited (Sport)"};
+
+// Backward-compatible aliases
+const DriveProfile PROFILE_1 = PROFILE_1_LOCKED;
+const DriveProfile PROFILE_2 = PROFILE_2_LOCKED;
+const DriveProfile PROFILE_3 = PROFILE_3_LOCKED;
+const DriveProfile PROFILE_3_STANDARD = PROFILE_3_LOCKED;
+const DriveProfile PROFILE_3_SHIFTED = PROFILE_2_UNLOCKED;
+const DriveProfile PROFILE_S2 = PROFILE_2_UNLOCKED;
+const DriveProfile PROFILE_S3 = PROFILE_3_UNLOCKED;
 
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f; // Strong default brake current in Amps
@@ -153,7 +161,8 @@ bool displayLightState = false;
 bool lastLightState = false;
 bool profileSSwitch = false;
 bool secretComboUnlocked = false;
-bool gearShiftEnabled = false;
+bool unlockEnabled = false;
+bool gearShiftEnabled = false; // Alias for backward compatibility
 uint8_t gearHistory[7] = {1, 1, 1, 1, 1, 1, 1};
 
 // Cruise Control State
@@ -454,16 +463,28 @@ void updateKickStartForGear() {
 }
 
 void updateActiveProfile() {
-  if (currentGear == 1) {
-    activeProfile = PROFILE_1;
+  if (currentGear <= 1) {
+    currentGear = 1;
+    if (unlockEnabled) {
+      unlockEnabled = false;
+      gearShiftEnabled = false;
+      secretComboUnlocked = false;
+      prefs.putBool("unlock_en", false);
+      prefs.putBool("gear_shift", false);
+    }
+    activeProfile = PROFILE_1_LOCKED;
+    profileSSwitch = false;
   } else if (currentGear == 2) {
-    activeProfile = PROFILE_2;
-  } else if (currentGear == 3) {
-    activeProfile = (gearShiftEnabled && bleClientConnected)
-                        ? PROFILE_3_SHIFTED
-                        : PROFILE_3_STANDARD;
-  } else if (currentGear >= 4) {
-    activeProfile = PROFILE_S3;
+    activeProfile = (unlockEnabled && bleClientConnected)
+                        ? PROFILE_2_UNLOCKED
+                        : PROFILE_2_LOCKED;
+    profileSSwitch = false;
+  } else if (currentGear >= 3) {
+    currentGear = 3;
+    activeProfile = (unlockEnabled && bleClientConnected)
+                        ? PROFILE_3_UNLOCKED
+                        : PROFILE_3_LOCKED;
+    profileSSwitch = (unlockEnabled && bleClientConnected);
   }
   updateKickStartForGear();
   // Apply native VESC speed limit profile (COMM_SET_MCCONF_TEMP = 48) to both
@@ -472,7 +493,7 @@ void updateActiveProfile() {
 }
 
 void setGear(int newGear) {
-  currentGear = constrain(newGear, 1, 4);
+  currentGear = constrain(newGear, 1, 3);
 
   // Shift gear history
   for (int i = 0; i < 6; i++) {
@@ -480,29 +501,37 @@ void setGear(int newGear) {
   }
   gearHistory[6] = (uint8_t)currentGear;
 
-  if (currentGear < 4) {
-    // Leaving 4th gear (or operating in gears 1..3) immediately locks 4th gear
-    // / S-mode
+  // Safety relock: switching to Gear 1 immediately locks scooter to 5, 15, 20 km/h
+  if (currentGear == 1 && unlockEnabled) {
+    unlockEnabled = false;
+    gearShiftEnabled = false;
     secretComboUnlocked = false;
-    profileSSwitch = false;
-  } else {
+    prefs.putBool("unlock_en", false);
+    prefs.putBool("gear_shift", false);
+    blePushLine("UNLOCK: RELOCKED (Gear 1 Safety) UL=0 G=1");
+  }
+
+  // Cruise control suspended in Gear 3 Unlocked (Sport)
+  if (currentGear == 3 && unlockEnabled && bleClientConnected) {
     profileSSwitch = true;
-    // Cruise control forbidden in 4th gear (Sport): turn off immediately!
     if (cruiseControlActive) {
       cruiseControlActive = false;
       cruiseTopSpeedStartTime = 0;
-      blePushLine("CRUISE: SUSPENDED (Gear 4)");
+      blePushLine("CRUISE: SUSPENDED (Sport)");
     }
+  } else {
+    profileSSwitch = false;
   }
 
   updateActiveProfile();
 
-  char gbuf[140];
+  char gbuf[160];
   snprintf(gbuf, sizeof(gbuf),
-           "GEAR shifted -> Gear %d: %s (Limit: %.0f km/h, %.0f A, %s)",
+           "GEAR: %d (%s, Limit: %.0f km/h, %.0f A, %s) G=%d UL=%d",
            currentGear, activeProfile.name, activeProfile.speedLimitKmH,
            activeProfile.maxCurrentAmps,
-           (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
+           (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start",
+           currentGear, (unlockEnabled && bleClientConnected) ? 1 : 0);
   blePushLine(String(gbuf));
 }
 
@@ -513,33 +542,21 @@ int getDisplayGear(int raw) {
     return 2;
   if (raw == 15 || raw == 3)
     return 3;
-  if (raw == 20 || raw == 4)
-    return 4;
   return constrain(raw, 1, 3);
 }
 
 int calculateMappedGear(int raw) {
-  int dispGear = getDisplayGear(raw);
-  if (bleClientConnected && gearShiftEnabled) {
-    // Gear shift mode: Display 1 -> Gear 2, Display 2 -> Gear 3, Display 3 ->
-    // Gear 4 (Sport, unlocked by default)
-    int shifted = dispGear + 1;
-    return constrain(shifted, 2, 4);
-  } else {
-    // Normal mode: Display 1 -> Gear 1, Display 2 -> Gear 2, Display 3 -> Gear
-    // 3 Gear 4 locked unless secret combo unlocked
-    int g = constrain(dispGear, 1, 4);
-    if (!secretComboUnlocked && g > 3) {
-      g = 3;
-    }
-    return g;
-  }
+  return getDisplayGear(raw);
 }
 
-void applyGearShiftState() {
+void applyUnlockState() {
   int raw = (lastRawGear > 0) ? lastRawGear : 1;
   int newGear = calculateMappedGear(raw);
   setGear(newGear);
+}
+
+void applyGearShiftState() {
+  applyUnlockState();
 }
 
 void handleDisplayRxPacket(const uint8_t *packet) {
@@ -562,8 +579,10 @@ void handleDisplayRxPacket(const uint8_t *packet) {
     // Secret combo unlock check: [1, 2, 3, 2, 3, 2, 3] + Light ON
     if (light && (memcmp(gearHistory, COMBO_KEY, 7) == 0)) {
       secretComboUnlocked = true;
-      setGear(4);
-      blePushLine("SECRET UNLOCK: S-Mode (Sport 40+ km/h) activated!");
+      unlockEnabled = true;
+      gearShiftEnabled = true;
+      setGear(3);
+      blePushLine("SECRET UNLOCK: Sport Unlimited activated! UL=1 G=3");
     }
 
     lastLightState = light;
@@ -681,47 +700,64 @@ void bleHandleCommand(const String &cmd) {
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
-            : (currentGear >= 4 ? "G4"
+            : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "G4"
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(buf, sizeof(buf),
              "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
-             "LIM=%.0fkm/h KICK=%s(%.0f) GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
+             "LIM=%.0fkm/h KICK=%s(%.0f) UL=%d GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
              "BC=%.1fA CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle,
              debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
              activeProfile.name, activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
-             (gearShiftEnabled && bleClientConnected) ? 1 : 0, ccStatus,
+             (unlockEnabled && bleClientConnected) ? 1 : 0,
+             (unlockEnabled && bleClientConnected) ? 1 : 0, ccStatus,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH",
              userBrakeAmps, slaveCanId);
     blePushLine(String(buf));
-  } else if (cmd == "GS" || cmd == "GSHIFT") {
-    blePushLine("GSHIFT is " +
-                String((gearShiftEnabled && bleClientConnected)
-                           ? "ON (Display: 1->G2, 2->G3, 3->G4)"
-                           : "OFF (Display: 1->G1, 2->G2, 3->G3)"));
-  } else if (cmd.startsWith("GSHIFT ") || cmd.startsWith("GS ")) {
+  } else if (cmd == "UL" || cmd == "UNLOCK" || cmd == "GS" || cmd == "GSHIFT") {
+    blePushLine("UNLOCK is " +
+                String((unlockEnabled && bleClientConnected)
+                           ? "ON (G2: 25km/h, G3: Unlimited)"
+                           : "OFF (G1: 5km/h, G2: 15km/h, G3: 20km/h)"));
+  } else if (cmd.startsWith("UNLOCK ") || cmd.startsWith("UL ") ||
+             cmd.startsWith("GSHIFT ") || cmd.startsWith("GS ")) {
     int val = 0;
-    if (cmd.startsWith("GSHIFT "))
+    if (cmd.startsWith("UNLOCK "))
+      val = cmd.substring(7).toInt();
+    else if (cmd.startsWith("UL "))
+      val = cmd.substring(3).toInt();
+    else if (cmd.startsWith("GSHIFT "))
       val = cmd.substring(7).toInt();
     else
       val = cmd.substring(3).toInt();
-    gearShiftEnabled = (val != 0);
-    prefs.putBool("gear_shift", gearShiftEnabled);
-    if (!gearShiftEnabled) {
+
+    if (val != 0) {
+      if (currentGear == 1) {
+        blePushLine("ERR cannot unlock in gear 1 (shift to 2 or 3 first)");
+      } else {
+        unlockEnabled = true;
+        gearShiftEnabled = true;
+        prefs.putBool("unlock_en", true);
+        prefs.putBool("gear_shift", true);
+        applyUnlockState();
+        blePushLine("UNLOCK set to ON (Gears 2: 25km/h, 3: Unlim) UL=1 G=" + String(currentGear));
+      }
+    } else {
+      unlockEnabled = false;
+      gearShiftEnabled = false;
       secretComboUnlocked = false;
+      prefs.putBool("unlock_en", false);
+      prefs.putBool("gear_shift", false);
+      applyUnlockState();
+      blePushLine("UNLOCK set to OFF (Gears 1: 5km/h, 2: 15km/h, 3: 20km/h) UL=0 G=" + String(currentGear));
     }
-    applyGearShiftState();
-    blePushLine("GSHIFT set to " +
-                String((gearShiftEnabled && bleClientConnected)
-                           ? "ON (Gears 2-4, G4 unlocked)"
-                           : "OFF (Gears 1-3, G4 locked)"));
   } else if (cmd == "CC" || cmd == "CRUISE") {
     const char *stateStr =
         !cruiseControlEnabled
             ? "DISABLED"
-            : (currentGear >= 4 ? "SUSPENDED (G4)"
+            : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "SUSPENDED (G4)"
                                 : (cruiseControlActive ? "ENGAGED" : "ARMED"));
     blePushLine("CRUISE is " + String(stateStr));
   } else if (cmd.startsWith("CC ") || cmd.startsWith("CRUISE ")) {
@@ -739,7 +775,7 @@ void bleHandleCommand(const String &cmd) {
     const char *stateStr =
         !cruiseControlEnabled
             ? "DISABLED"
-            : (currentGear >= 4 ? "ARMED (Suspended in G4)" : "ARMED");
+            : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "ARMED (Suspended in G4)" : "ARMED");
     blePushLine("CRUISE set to " + String(stateStr));
   } else if (cmd.startsWith("BEN ")) {
     int en = cmd.substring(4).toInt();
@@ -757,20 +793,18 @@ void bleHandleCommand(const String &cmd) {
                 String(brakeEnabled ? "ENABLED" : "DISABLED"));
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
-    if (g >= 1 && g <= 4) {
-      if (gearShiftEnabled && bleClientConnected && g == 1) {
-        g = 2; // In Gear Shift mode, there is no 1st gear
-      }
+    if (g >= 1 && g <= 3) {
       setGear(g);
       char pbuf[140];
       snprintf(pbuf, sizeof(pbuf),
-               "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s)", g,
+               "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s) G=%d UL=%d", g,
                activeProfile.name, activeProfile.speedLimitKmH,
                activeProfile.maxErpm, activeProfile.maxCurrentAmps,
-               (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start");
+               (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start",
+               currentGear, (unlockEnabled && bleClientConnected) ? 1 : 0);
       blePushLine(String(pbuf));
     } else {
-      blePushLine("ERR profile 1..4 (1=10km/h, 2=15km/h, 3=25km/h, 4=40km/h)");
+      blePushLine("ERR profile 1..3 (1=5km/h, 2=15/25km/h, 3=20/Unlim km/h)");
     }
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
@@ -951,13 +985,14 @@ class ServerCallbacks : public BLEServerCallbacks {
   void onDisconnect(BLEServer *) {
     bleClientConnected = false;
     bleOtaActive = false;
+    unlockEnabled = false;
     gearShiftEnabled = false;
     secretComboUnlocked = false;
     if (cruiseControlActive) {
       cruiseControlActive = false;
       cruiseTopSpeedStartTime = 0;
     }
-    applyGearShiftState();
+    applyUnlockState();
     bleServer->getAdvertising()->start();
   }
 };
@@ -998,7 +1033,8 @@ void setup() {
   if (kickErpmThreshold < 0.0f) {
     kickErpmThreshold = DEFAULT_KICK_ERPM;
   }
-  gearShiftEnabled = prefs.getBool("gear_shift", true);
+  unlockEnabled = prefs.getBool("unlock_en", false);
+  gearShiftEnabled = unlockEnabled;
   cruiseControlEnabled = prefs.getBool("cruise_en", false);
   brakePin = 19;                                     // Default 19 (Soldered brake pin)
   prefs.putInt("brake_pin", 19);
@@ -1230,11 +1266,11 @@ void loop() {
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
-            : (currentGear >= 4 ? "G4"
+            : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "G4"
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d",
+        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d",
         vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
         currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
         brakeEnabled ? 1 : 0, targetAmps, kickBlocked ? "HELD" : "ROLL",
@@ -1242,7 +1278,9 @@ void loop() {
         lights.isFrontLightOn() ? 1 : 0,
         lights.isTurnLeftActive() ? 1 : 0,
         lights.isTurnRightActive() ? 1 : 0,
-        dualMotorEnabled ? 1 : 0);
+        dualMotorEnabled ? 1 : 0,
+        (unlockEnabled && bleClientConnected) ? 1 : 0,
+        (unlockEnabled && bleClientConnected) ? 1 : 0);
     blePushLine(String(buf));
   }
 

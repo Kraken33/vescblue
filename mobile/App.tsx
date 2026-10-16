@@ -88,7 +88,9 @@ export default function App() {
   const [brakeEnabled, setBrakeEnabled] = useState(true);
   const [activeGear, setActiveGear] = useState(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
-  const [gearShiftEnabled, setGearShiftEnabled] = useState(true);
+  const [unlockEnabled, setUnlockEnabled] = useState(false);
+  const gearShiftEnabled = unlockEnabled;
+  const setGearShiftEnabled = setUnlockEnabled;
   const [cruiseEnabled, setCruiseEnabled] = useState(false);
   const [cruiseActive, setCruiseActive] = useState(false);
   const [cruiseStatus, setCruiseStatus] = useState<'OFF' | 'ARMED' | 'ACTIVE' | 'G4'>('OFF');
@@ -840,9 +842,9 @@ export default function App() {
         }
       });
 
-      // Sync gear shift mode and query initial telemetry
+      // Sync unlock mode and query initial telemetry
       setTimeout(() => {
-        sendCmd(gearShiftEnabled ? 'GS 1' : 'GS 0');
+        sendCmd(unlockEnabled ? 'UL 1' : 'UL 0');
         setTimeout(() => sendCmd('S'), 200);
       }, 300);
     } catch (e: any) {
@@ -1020,7 +1022,7 @@ export default function App() {
     addConsole(str);
 
     const spdMatch = str.match(/SPD=([\d.]+)/);
-    const gearMatch = str.match(/G=(\d+)/);
+    const gearMatch = str.match(/(?:G=|GEAR:\s*|GEAR shifted -> Gear\s*)(\d+)/);
     const sMatch = str.match(/S=(\d+)/);
     const vMatch = str.match(/V=([\d.]+)/);
     const rawMatch = str.match(/RAW=(\d+)/);
@@ -1028,6 +1030,7 @@ export default function App() {
     const benMatch = str.match(/BEN=(\d+)/);
     const ampMatch = str.match(/AMP=([\d.]+)/);
     const bcMatch = str.match(/BC=([\d.]+)A/);
+    const ulMatch = str.match(/UL=(\d+)/);
     const gsMatch = str.match(/GS=(\d+)/);
     const ccMatch = str.match(/CC=([A-Za-z0-9_]+)/);
     const lMatch = str.match(/\bL=(\d+)/);
@@ -1042,11 +1045,17 @@ export default function App() {
     if (brkMatch) setIsBraking(brkMatch[1] === '1');
     if (benMatch) setBrakeEnabled(benMatch[1] === '1');
     if (bcMatch) setBrakeAmps(parseFloat(bcMatch[1]));
-    if (gsMatch) setGearShiftEnabled(gsMatch[1] === '1');
+    if (ulMatch) setUnlockEnabled(ulMatch[1] === '1');
+    else if (gsMatch) setUnlockEnabled(gsMatch[1] === '1');
     if (lMatch) setFrontLightOn(lMatch[1] === '1');
     if (tlMatch) setTurnLeftOn(tlMatch[1] === '1');
     if (trMatch) setTurnRightOn(trMatch[1] === '1');
     if (ddmMatch) setDdmActive(ddmMatch[1] === '1');
+
+    if (str.includes('UNLOCK: RELOCKED')) {
+      setUnlockEnabled(false);
+      setActiveGear(1);
+    }
 
     if (str.includes('LIGHT: ON')) setFrontLightOn(true);
     else if (str.includes('LIGHT: OFF')) setFrontLightOn(false);
@@ -1092,7 +1101,7 @@ export default function App() {
       setCruiseStatus('ACTIVE');
     } else if (str.includes('CRUISE: DISENGAGED')) {
       setCruiseActive(false);
-      setCruiseStatus(activeGear >= 4 ? 'G4' : 'ARMED');
+      setCruiseStatus((activeGear >= 3 && unlockEnabled) ? 'G4' : 'ARMED');
     } else if (str.includes('CRUISE: SUSPENDED')) {
       setCruiseActive(false);
       setCruiseStatus('G4');
@@ -1100,9 +1109,9 @@ export default function App() {
 
     if (gearMatch) {
       let g = parseInt(gearMatch[1], 10);
-      let s = sMatch ? parseInt(sMatch[1], 10) : 0;
-      if (g === 3 && s === 1) g = 4;
-      setActiveGear(g);
+      if (g >= 1 && g <= 3) {
+        setActiveGear(g);
+      }
     }
   };
 
@@ -1113,11 +1122,10 @@ export default function App() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
       if (cmdStr.startsWith('P ')) {
         const g = parseInt(cmdStr.split(' ')[1], 10);
-        if (g >= 1 && g <= 4) setActiveGear(g);
-      } else if (cmdStr.startsWith('GS ')) {
+        if (g >= 1 && g <= 3) setActiveGear(g);
+      } else if (cmdStr.startsWith('UL ') || cmdStr.startsWith('GS ')) {
         const en = cmdStr.split(' ')[1] === '1';
-        setGearShiftEnabled(en);
-        if (en && activeGear === 1) setActiveGear(2);
+        setUnlockEnabled(en);
       } else if (cmdStr.startsWith('BEN ')) {
         const en = cmdStr.split(' ')[1] === '1';
         setBrakeEnabled(en);
@@ -1128,7 +1136,7 @@ export default function App() {
           setCruiseActive(false);
           setCruiseStatus('OFF');
         } else {
-          setCruiseStatus(activeGear >= 4 ? 'G4' : 'ARMED');
+          setCruiseStatus((activeGear >= 3 && unlockEnabled) ? 'G4' : 'ARMED');
         }
       } else if (cmdStr === 'L' || cmdStr === 'LIGHT') {
         setFrontLightOn((prev) => !prev);
@@ -1177,14 +1185,21 @@ export default function App() {
     sendCmd(nextState ? 'DUAL 1' : 'DUAL 0');
   };
 
-  const toggleGearShift = (val: boolean) => {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setGearShiftEnabled(val);
-    sendCmd(`GS ${val ? 1 : 0}`);
+  const toggleUnlock = (val: boolean) => {
     if (val && activeGear === 1) {
-      setActiveGear(2);
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+      Alert.alert(
+        'Cannot Unlock in 1st Gear',
+        'Please shift to Gear 2 or Gear 3 on the handlebar display or app before activating Unlock.',
+        [{ text: 'OK' }]
+      );
+      return;
     }
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setUnlockEnabled(val);
+    sendCmd(`UL ${val ? 1 : 0}`);
   };
+  const toggleGearShift = toggleUnlock;
 
   const toggleBrakeSensor = (val: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1199,15 +1214,18 @@ export default function App() {
       setCruiseActive(false);
       setCruiseStatus('OFF');
     } else {
-      setCruiseStatus(activeGear >= 4 ? 'G4' : 'ARMED');
+      setCruiseStatus((activeGear >= 3 && unlockEnabled) ? 'G4' : 'ARMED');
     }
     sendCmd(`CC ${val ? 1 : 0}`);
   };
 
   const selectProfile = (gear: number) => {
-    if (gearShiftEnabled && gear === 1) {
+    if (gear === 1 && unlockEnabled) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-      addConsole('[INFO] 1st Gear bypassed in Gear Shift mode (Gears 2–4 active)');
+      setUnlockEnabled(false);
+      setActiveGear(1);
+      sendCmd('P 1');
+      addConsole('[SAFETY] Gear 1 selected: Scooter Locked (5 km/h limit)');
       return;
     }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1315,7 +1333,7 @@ export default function App() {
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>SPEED PROFILES</Text>
         <Text style={styles.activeProfileLabel}>
-          Gear {activeGear} {gearShiftEnabled ? '(Shifted 2–4)' : '(Standard 1–3)'}
+          Gear {activeGear} {unlockEnabled ? '(Unlocked 25 / Unlim)' : '(Locked 5 / 15 / 20)'}
         </Text>
       </View>
 
@@ -1323,39 +1341,30 @@ export default function App() {
         {[
           {
             gear: 1,
-            name: 'Eco Mode',
-            limit: '10 km/h',
+            name: unlockEnabled ? 'Lock Safety Trigger' : 'Eco Safe',
+            limit: '5 km/h',
             amps: '25A Max',
             color: '#10b981',
-            handlebar: gearShiftEnabled ? 'Bypassed' : 'Disp 1',
+            handlebar: 'Disp 1',
           },
           {
             gear: 2,
-            name: 'City Cruising',
-            limit: '15 km/h',
-            amps: '40A Max',
+            name: unlockEnabled ? 'Drive Unlocked' : 'City Cruising',
+            limit: unlockEnabled ? '25 km/h' : '15 km/h',
+            amps: unlockEnabled ? '65A Max' : '40A Max',
             color: '#00f2fe',
-            handlebar: gearShiftEnabled ? 'Disp 1' : 'Disp 2',
+            handlebar: 'Disp 2',
           },
           {
             gear: 3,
-            name: 'Drive Legal',
-            limit: gearShiftEnabled ? '25 km/h' : '22 km/h',
-            amps: '65A Max',
-            color: '#f59e0b',
-            handlebar: gearShiftEnabled ? 'Disp 2' : 'Disp 3',
-          },
-          {
-            gear: 4,
-            name: 'Sport Unlock',
-            limit: '40+ km/h',
-            amps: '120A Max',
-            color: '#f43f5e',
-            handlebar: gearShiftEnabled ? 'Disp 3 (Unlocked)' : 'Secret Locked',
+            name: unlockEnabled ? 'Sport Unlimited' : 'Drive Legal',
+            limit: unlockEnabled ? 'Unlimited' : '20 km/h',
+            amps: unlockEnabled ? '120A Max' : '65A Max',
+            color: unlockEnabled ? '#f43f5e' : '#f59e0b',
+            handlebar: 'Disp 3',
           },
         ].map((p) => {
           const active = activeGear === p.gear;
-          const isBypassed = gearShiftEnabled && p.gear === 1;
           return (
             <TouchableOpacity
               key={p.gear}
@@ -1363,10 +1372,9 @@ export default function App() {
                 styles.profileCard,
                 inLandscapeMode && styles.profileCardLandscape,
                 active && { borderColor: p.color, backgroundColor: 'rgba(255, 255, 255, 0.08)' },
-                isBypassed && styles.profileCardBypassed,
               ]}
               onPress={() => selectProfile(p.gear)}
-              activeOpacity={isBypassed ? 1 : 0.7}
+              activeOpacity={0.7}
             >
               <View style={styles.pHeader}>
                 <Text style={[styles.pGear, inLandscapeMode && styles.pGearLandscape, active && { color: p.color }]}>G{p.gear}</Text>
@@ -1375,7 +1383,7 @@ export default function App() {
               <Text style={[styles.pName, inLandscapeMode && styles.pNameLandscape]} numberOfLines={1}>{p.name}</Text>
               <View style={styles.pFooterRow}>
                 <Text style={[styles.pAmps, inLandscapeMode && styles.pAmpsLandscape]}>{p.amps}</Text>
-                <View style={[styles.handlebarBadge, isBypassed && styles.handlebarBadgeBypassed, active && { borderColor: p.color }]}>
+                <View style={[styles.handlebarBadge, active && { borderColor: p.color }]}>
                   <Text style={[styles.handlebarBadgeText, active && { color: p.color }]}>{p.handlebar}</Text>
                 </View>
               </View>
@@ -1700,34 +1708,36 @@ export default function App() {
     );
   };
 
-  const renderGearShiftCard = () => (
+  const renderUnlockCard = () => (
     <View style={styles.gearShiftCard}>
       <View style={styles.gearShiftRow}>
         <View style={styles.gearShiftTextCol}>
           <View style={styles.gearShiftTitleRow}>
-            <Text style={styles.gearShiftTitle}>⚡ GEAR SHIFT MODE</Text>
-            <View style={[styles.gearShiftBadge, gearShiftEnabled ? styles.gearShiftBadgeOn : styles.gearShiftBadgeOff]}>
-              <Text style={[styles.gearShiftBadgeText, gearShiftEnabled ? styles.gearShiftBadgeTextOn : styles.gearShiftBadgeTextOff]}>
-                {gearShiftEnabled ? 'GEARS 2–4 ACTIVE' : 'STANDARD 1–3'}
+            <Text style={styles.gearShiftTitle}>🔓 SCOOTER UNLOCK</Text>
+            <View style={[styles.gearShiftBadge, unlockEnabled ? styles.gearShiftBadgeOn : styles.gearShiftBadgeOff]}>
+              <Text style={[styles.gearShiftBadgeText, unlockEnabled ? styles.gearShiftBadgeTextOn : styles.gearShiftBadgeTextOff]}>
+                {unlockEnabled ? 'UNLOCKED (25 / UNLIM)' : 'LOCKED (5 / 15 / 20)'}
               </Text>
             </View>
           </View>
           <Text style={styles.gearShiftDesc}>
-            {gearShiftEnabled
-              ? 'Handlebar: 1→15 km/h, 2→25 km/h, 3→40+ km/h (G4 Unlocked). 1st gear omitted. Auto-locks on disconnect.'
-              : 'Handlebar: 1→10 km/h, 2→15 km/h, 3→22 km/h. 4th gear secret locked.'}
+            {unlockEnabled
+              ? 'Handlebar: 2→25 km/h, 3→Unlimited. Selecting 1st gear instantly locks scooter. Auto-locks on disconnect.'
+              : 'Handlebar: 1→5 km/h, 2→15 km/h, 3→20 km/h. Shift to Gear 2 or 3 to unlock.'}
           </Text>
         </View>
         <Switch
-          value={gearShiftEnabled}
-          onValueChange={toggleGearShift}
+          value={unlockEnabled}
+          onValueChange={toggleUnlock}
           trackColor={{ false: '#1e293b', true: '#00f2fe' }}
-          thumbColor={gearShiftEnabled ? '#ffffff' : '#64748b'}
+          thumbColor={unlockEnabled ? '#ffffff' : '#64748b'}
           ios_backgroundColor="#1e293b"
         />
       </View>
     </View>
   );
+
+  const renderGearShiftCard = renderUnlockCard;
 
   const renderCruiseCard = () => (
     <View style={[styles.gearShiftCard, cruiseActive && styles.cruiseCardActive]}>
@@ -1771,7 +1781,7 @@ export default function App() {
               : cruiseStatus === 'G4'
               ? 'Cruise disabled in 4th gear (Sport). Auto-restores in Gears 1–3.'
               : cruiseStatus === 'ARMED'
-              ? `Hold top speed (${activeGear === 1 ? '10' : activeGear === 2 ? '15' : gearShiftEnabled ? '25' : '22'} km/h ±2) for 5s to engage.`
+              ? `Hold top speed (${activeGear === 1 ? '5' : activeGear === 2 ? (unlockEnabled ? '25' : '15') : (unlockEnabled ? 'Sport' : '20')} km/h ±2) for 5s to engage.`
               : 'Locks maximum speed for current gear after 5 seconds at top speed. Stops on brake.'}
           </Text>
         </View>
