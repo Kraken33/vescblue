@@ -32,6 +32,9 @@ HardwareSerial DisplaySerial(1);
 
 // Target CAN ID for the secondary VESC (Second motor: ID 37)
 uint8_t slaveCanId = 37;
+bool dualMotorEnabled = true;
+int lastDdmRaw = HIGH;
+unsigned long lastDdmDebounceTime = 0;
 
 // =========================================================================
 // Scooter Wheel & Motor Constants (from display.lisp)
@@ -803,8 +806,18 @@ void bleHandleCommand(const String &cmd) {
   } else if (cmd == "HAZ" || cmd == "HAZARD") {
     lights.toggleHazard();
     blePushLine("HAZARD: " + String(lights.isHazardActive() ? "ON" : "OFF"));
-  } else if (cmd == "DDM") {
-    blePushLine("DDM SWITCH: " + String(lights.isDdmActive() ? "ACTIVE (LOW)" : "INACTIVE (HIGH)"));
+  } else if (cmd == "DDM" || cmd == "DUAL") {
+    dualMotorEnabled = !dualMotorEnabled;
+    prefs.putBool("dual_mode", dualMotorEnabled);
+    blePushLine("DUAL MOTOR: " + String(dualMotorEnabled ? "ENABLED (2WD)" : "DISABLED (1WD)"));
+  } else if (cmd == "DUAL 1" || cmd == "DUAL ON" || cmd == "DDM 1") {
+    dualMotorEnabled = true;
+    prefs.putBool("dual_mode", dualMotorEnabled);
+    blePushLine("DUAL MOTOR: ENABLED (2WD)");
+  } else if (cmd == "DUAL 0" || cmd == "DUAL OFF" || cmd == "DDM 0") {
+    dualMotorEnabled = false;
+    prefs.putBool("dual_mode", dualMotorEnabled);
+    blePushLine("DUAL MOTOR: DISABLED (1WD)");
   } else if (cmd.startsWith("BC ")) {
     float bc = cmd.substring(3).toFloat();
     if (bc >= 0.0f && bc <= 60.0f) {
@@ -875,7 +888,7 @@ void bleHandleCommand(const String &cmd) {
     blePushLine(
         "S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] "
         "cruise | BEN [0/1] brake-en | BC [amps] brake | L [0/1] light | TL "
-        "turnL | TR turnR | HAZ haz | DDM | CAN [id] | T [v b] test | K kick | "
+        "turnL | TR turnR | HAZ haz | DUAL [0/1] dual | CAN [id] | T [v b] test | K kick | "
         "R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
@@ -1006,6 +1019,9 @@ void setup() {
   // Initialize Lights Controller (Physical buttons & MOSFET/relay outputs)
   lights.begin();
 
+  dualMotorEnabled = prefs.getBool("dual_mode", true); // Default Dual Motor (2WD)
+  lastDdmRaw = digitalRead(PIN_IN_DDM);
+
   bleInit();
 
   // UART2 connected to VESC Master at 115200 Baud (RX=16, TX=17)
@@ -1070,6 +1086,19 @@ void loop() {
   }
 
   currentVoltageReading = (currentRawThrottle / 4095.0f) * 3.3f;
+
+  // Monitor physical DDM switch toggle (GPIO 4)
+  int ddmReading = digitalRead(PIN_IN_DDM);
+  if (ddmReading != lastDdmRaw && (now - lastDdmDebounceTime > 50)) {
+    lastDdmDebounceTime = now;
+    lastDdmRaw = ddmReading;
+    bool newDual = (ddmReading == LOW);
+    if (newDual != dualMotorEnabled) {
+      dualMotorEnabled = newDual;
+      prefs.putBool("dual_mode", dualMotorEnabled);
+      blePushLine("DUAL MOTOR: " + String(dualMotorEnabled ? "ENABLED (2WD via Switch)" : "DISABLED (1WD via Switch)"));
+    }
+  }
 
   // 4. Push brake flag to Slave VESC immediately on change
   if (debouncedBrakeState != lastSentBrakeState) {
@@ -1180,10 +1209,12 @@ void loop() {
         // current for current gear! VESC native speed limiter profile limits
         // motor RPM cleanly at the gear's top speed.
         targetAmps = activeProfile.maxCurrentAmps;
-        sendDualCurrent(targetAmps, targetAmps);
+        float slaveAmps = dualMotorEnabled ? targetAmps : 0.0f;
+        sendDualCurrent(targetAmps, slaveAmps);
       } else if (rawRatio > 0.01f) {
         targetAmps = rawRatio * activeProfile.maxCurrentAmps;
-        sendDualCurrent(targetAmps, targetAmps);
+        float slaveAmps = dualMotorEnabled ? targetAmps : 0.0f;
+        sendDualCurrent(targetAmps, slaveAmps);
       } else {
         targetAmps = 0.0f;
         sendDualCurrent(0.0f, 0.0f); // Freewheel / coasting on release
@@ -1211,7 +1242,7 @@ void loop() {
         lights.isFrontLightOn() ? 1 : 0,
         lights.isTurnLeftActive() ? 1 : 0,
         lights.isTurnRightActive() ? 1 : 0,
-        lights.isDdmActive() ? 1 : 0);
+        dualMotorEnabled ? 1 : 0);
     blePushLine(String(buf));
   }
 

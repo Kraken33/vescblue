@@ -14,8 +14,8 @@
 #define PIN_OUT_LIGHT       25   // Front light output (GPIO 25)
 #define PIN_OUT_BRAKE       26   // Back light output (GPIO 26 - Tail + Brake)
 #define PIN_OUT_BACK_LIGHT  26   // Alias for GPIO 26
-#define PIN_OUT_TURN_L      14   // Turn left output (GPIO 14)
-#define PIN_OUT_TURN_R      27   // Turn right output (GPIO 27)
+#define PIN_OUT_TURN_L      27   // Turn left output (GPIO 27)
+#define PIN_OUT_TURN_R      14   // Turn right output (GPIO 14)
 
 // Timing Constants
 #define BLINK_INTERVAL_MS   400  // Blinker flash period (400ms ON / 400ms OFF)

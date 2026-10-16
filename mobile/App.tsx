@@ -25,6 +25,7 @@ import { activateKeepAwakeAsync, deactivateKeepAwake } from 'expo-keep-awake';
 import { BleManager, Device, Characteristic, Subscription } from 'react-native-ble-plx';
 import { Buffer } from 'buffer';
 import { ScooterBeacon, BeaconRangeEvent, BeaconRegionEvent } from 'scooter-beacon';
+import { useAudioPlayer, setAudioModeAsync } from 'expo-audio';
 
 // BLE UUIDs for ESP32 VESC Controller
 const BLE_SVC_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
@@ -100,8 +101,41 @@ export default function App() {
   const [ddmActive, setDdmActive] = useState(false);
   const blinkAnim = useRef(new Animated.Value(1)).current;
 
+  // Sound effects for turn signal blinker via expo-audio
+  const tickPlayer = useAudioPlayer(require('./assets/turn_tick.wav'));
+  const tockPlayer = useAudioPlayer(require('./assets/turn_tock.wav'));
+  const soundStepRef = useRef<'tick' | 'tock'>('tick');
+
+  useEffect(() => {
+    try {
+      setAudioModeAsync({
+        playsInSilentMode: true,
+        interruptionMode: 'mixWithOthers',
+      }).catch(() => {});
+    } catch {
+      // Safe ignore
+    }
+  }, []);
+
+  const playBlinkerClick = useCallback((step?: 'tick' | 'tock') => {
+    try {
+      const targetStep = step || soundStepRef.current;
+      soundStepRef.current = targetStep === 'tick' ? 'tock' : 'tick';
+      const player = targetStep === 'tick' ? tickPlayer : tockPlayer;
+      if (player) {
+        player.seekTo(0);
+        player.play();
+      }
+    } catch {
+      // Safe ignore playback errors
+    }
+  }, [tickPlayer, tockPlayer]);
+
   useEffect(() => {
     if (turnLeftOn || turnRightOn) {
+      // Play crisp tick immediately on activation
+      playBlinkerClick('tick');
+
       const loop = Animated.loop(
         Animated.sequence([
           Animated.timing(blinkAnim, {
@@ -117,14 +151,23 @@ export default function App() {
         ])
       );
       loop.start();
+
+      // Alternating tick-tock flasher sound (~380ms)
+      const timer = setInterval(() => {
+        playBlinkerClick();
+      }, 380);
+
       return () => {
+        clearInterval(timer);
         loop.stop();
         blinkAnim.setValue(1);
+        soundStepRef.current = 'tick';
       };
     } else {
       blinkAnim.setValue(1);
+      soundStepRef.current = 'tick';
     }
-  }, [turnLeftOn, turnRightOn]);
+  }, [turnLeftOn, turnRightOn, playBlinkerClick]);
 
   const switchLandscapePage = (page: number) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
@@ -1047,6 +1090,12 @@ export default function App() {
       } else if (cmdStr === 'HAZ' || cmdStr === 'HAZARD') {
         setTurnLeftOn((prev) => !prev);
         setTurnRightOn((prev) => !prev);
+      } else if (cmdStr === 'DUAL' || cmdStr === 'DDM') {
+        setDdmActive((prev) => !prev);
+      } else if (cmdStr === 'DUAL 1' || cmdStr === 'DDM 1') {
+        setDdmActive(true);
+      } else if (cmdStr === 'DUAL 0' || cmdStr === 'DDM 0') {
+        setDdmActive(false);
       }
       return;
     }
@@ -1065,6 +1114,13 @@ export default function App() {
     } finally {
       isWritingRef.current = false;
     }
+  };
+
+  const toggleDualMode = (desiredState?: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const nextState = desiredState !== undefined ? desiredState : !ddmActive;
+    setDdmActive(nextState);
+    sendCmd(nextState ? 'DUAL 1' : 'DUAL 0');
   };
 
   const toggleGearShift = (val: boolean) => {
@@ -1834,13 +1890,25 @@ export default function App() {
         </Animated.View>
       </TouchableOpacity>
 
-      {/* DDM badge */}
-      <View style={[styles.miniLightPill, ddmActive && styles.miniLightPillCyan]}>
-        <Text style={styles.miniLightIcon}>⚡</Text>
-        <Text style={[styles.miniLightText, ddmActive && styles.miniLightTextCyan]}>
-          {ddmActive ? 'DUAL' : 'SINGLE'}
+      {/* Interactive Single / Dual Motor Mode Switch */}
+      <TouchableOpacity
+        style={[
+          styles.miniLightPill,
+          ddmActive ? styles.miniLightPillCyan : styles.miniLightPillDim,
+        ]}
+        onPress={() => toggleDualMode()}
+        activeOpacity={0.7}
+      >
+        <Text style={styles.miniLightIcon}>{ddmActive ? '⚡' : '🛴'}</Text>
+        <Text
+          style={[
+            styles.miniLightText,
+            ddmActive ? styles.miniLightTextCyan : styles.miniLightTextDim,
+          ]}
+        >
+          {ddmActive ? '2WD DUAL' : '1WD SINGLE'}
         </Text>
-      </View>
+      </TouchableOpacity>
     </View>
   );
 
@@ -2049,7 +2117,7 @@ export default function App() {
                 >
                   LEFT TURN
                 </Text>
-                <Text style={styles.turnBtnPin}>GPIO 14 OUT • D18 IN</Text>
+                <Text style={styles.turnBtnPin}>GPIO 27 OUT • D18 IN</Text>
               </View>
             </TouchableOpacity>
 
@@ -2099,7 +2167,7 @@ export default function App() {
                 >
                   RIGHT TURN
                 </Text>
-                <Text style={styles.turnBtnPin}>GPIO 27 OUT • D21 IN</Text>
+                <Text style={styles.turnBtnPin}>GPIO 14 OUT • D21 IN</Text>
               </View>
               <Animated.View style={{ opacity: turnRightOn ? blinkAnim : 1 }}>
                 <Text style={[styles.turnArrowIcon, turnRightOn && styles.turnArrowActive]}>
@@ -2110,31 +2178,63 @@ export default function App() {
           </View>
         </View>
 
-        {/* DDM Mode & Hardware Summary Bar */}
-        <View style={styles.ddmFooterRow}>
+        {/* Drive Mode Selector: Single vs Dual Motor Switch */}
+        <TouchableOpacity
+          style={[
+            styles.ddmFooterRow,
+            ddmActive ? styles.ddmFooterRowDual : styles.ddmFooterRowSingle,
+          ]}
+          onPress={() => toggleDualMode()}
+          activeOpacity={0.8}
+        >
           <View style={styles.ddmFooterLeft}>
-            <Text style={styles.ddmIcon}>🏎️</Text>
-            <View>
-              <Text style={styles.ddmTitle}>DDM Switch (GPIO 4)</Text>
-              <Text style={styles.ddmDesc}>Handlebar Dual Drive selector</Text>
-            </View>
-          </View>
-          <View
-            style={[
-              styles.ddmBadge,
-              ddmActive ? styles.ddmBadgeDual : styles.ddmBadgeSingle,
-            ]}
-          >
-            <Text
+            <View
               style={[
-                styles.ddmBadgeText,
-                ddmActive ? styles.ddmBadgeTextDual : styles.ddmBadgeTextSingle,
+                styles.ddmIconCircle,
+                ddmActive ? styles.ddmIconCircleDual : styles.ddmIconCircleSingle,
               ]}
             >
-              {ddmActive ? '⚡ DUAL MOTOR' : 'SINGLE MOTOR'}
-            </Text>
+              <Text style={styles.ddmIcon}>{ddmActive ? '⚡' : '🛴'}</Text>
+            </View>
+            <View style={{ flex: 1 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.ddmTitle}>
+                  {ddmActive ? 'DUAL MOTOR (2WD)' : 'SINGLE MOTOR (1WD)'}
+                </Text>
+                <Text style={styles.ddmHardwareTag}>GPIO 4 / BLE</Text>
+              </View>
+              <Text style={styles.ddmDesc} numberOfLines={1}>
+                {ddmActive
+                  ? 'Both motors engaged • Max torque & power'
+                  : 'Master motor only • Extended battery range'}
+              </Text>
+            </View>
           </View>
-        </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View
+              style={[
+                styles.ddmBadge,
+                ddmActive ? styles.ddmBadgeDual : styles.ddmBadgeSingle,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.ddmBadgeText,
+                  ddmActive ? styles.ddmBadgeTextDual : styles.ddmBadgeTextSingle,
+                ]}
+              >
+                {ddmActive ? '2WD' : '1WD'}
+              </Text>
+            </View>
+            <Switch
+              value={ddmActive}
+              onValueChange={(val) => toggleDualMode(val)}
+              trackColor={{ false: 'rgba(255,255,255,0.12)', true: '#00f2fe' }}
+              thumbColor={ddmActive ? '#ffffff' : '#94a3b8'}
+              ios_backgroundColor="rgba(255,255,255,0.12)"
+            />
+          </View>
+        </TouchableOpacity>
       </View>
     );
   };
@@ -3984,32 +4084,68 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     backgroundColor: '#0a0f1d',
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.06)',
-    borderRadius: 12,
-    paddingVertical: 10,
-    paddingHorizontal: 12,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+  },
+  ddmFooterRowDual: {
+    backgroundColor: 'rgba(0, 242, 254, 0.06)',
+    borderColor: 'rgba(0, 242, 254, 0.35)',
+  },
+  ddmFooterRowSingle: {
+    backgroundColor: '#0a0f1d',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   ddmFooterLeft: {
+    flex: 1,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 12,
+  },
+  ddmIconCircle: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  ddmIconCircleDual: {
+    backgroundColor: 'rgba(0, 242, 254, 0.16)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.4)',
+  },
+  ddmIconCircleSingle: {
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   ddmIcon: {
     fontSize: 18,
   },
   ddmTitle: {
     color: '#ffffff',
-    fontSize: 12,
-    fontWeight: '700',
+    fontSize: 12.5,
+    fontWeight: '800',
+    letterSpacing: 0.3,
+  },
+  ddmHardwareTag: {
+    color: '#64748b',
+    fontSize: 9.5,
+    fontWeight: '600',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 4,
   },
   ddmDesc: {
-    color: '#64748b',
-    fontSize: 10,
+    color: '#94a3b8',
+    fontSize: 10.5,
     marginTop: 2,
   },
   ddmBadge: {
     paddingHorizontal: 10,
-    paddingVertical: 4,
+    paddingVertical: 5,
     borderRadius: 8,
     borderWidth: 1,
   },
@@ -4019,18 +4155,18 @@ const styles = StyleSheet.create({
   },
   ddmBadgeSingle: {
     backgroundColor: 'rgba(255, 255, 255, 0.04)',
-    borderColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.12)',
   },
   ddmBadgeText: {
-    fontSize: 10,
-    fontWeight: '800',
+    fontSize: 10.5,
+    fontWeight: '900',
     letterSpacing: 0.5,
   },
   ddmBadgeTextDual: {
     color: '#00f2fe',
   },
   ddmBadgeTextSingle: {
-    color: '#64748b',
+    color: '#94a3b8',
   },
 
   // Landscape Mini Lights Bar (Screen 1 Dashboard)
@@ -4085,6 +4221,13 @@ const styles = StyleSheet.create({
   },
   miniLightTextRed: {
     color: '#f87171',
+  },
+  miniLightPillDim: {
+    backgroundColor: 'rgba(255, 255, 255, 0.03)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
+  },
+  miniLightTextDim: {
+    color: '#64748b',
   },
 });
 

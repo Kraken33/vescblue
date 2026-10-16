@@ -35,8 +35,8 @@
 // --- Outputs to ABE Box / Relays / Transistors ---
 #define PIN_OUT_BRAKE 26  // Back light output (Tail + Brake, High = ON)
 #define PIN_OUT_LIGHT 25  // Front light output (High = ON)
-#define PIN_OUT_TURN_L 14 // Left turn signal output (High = ON)
-#define PIN_OUT_TURN_R 27 // Right turn signal output (High = ON)
+#define PIN_OUT_TURN_L 27 // Left turn signal output (High = ON)
+#define PIN_OUT_TURN_R 14 // Right turn signal output (High = ON)
 
 // ============================================================================
 //                             VESC & MOTOR SETTINGS
