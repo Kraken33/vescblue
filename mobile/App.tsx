@@ -77,6 +77,7 @@ export default function App() {
   const [isConnected, setIsConnected] = useState(false);
   const [statusText, setStatusText] = useState('Ready to Connect');
   const [isScanning, setIsScanning] = useState(false);
+  const [isMainConnecting, setIsMainConnecting] = useState(false);
 
   // Telemetry State
   const [speed, setSpeed] = useState(0.0);
@@ -187,6 +188,9 @@ export default function App() {
   const charRef = useRef<Characteristic | null>(null);
   const notifSubRef = useRef<Subscription | null>(null);
   const isWritingRef = useRef(false);
+  const isMainConnectingRef = useRef<boolean>(false);
+  const deviceRef = useRef<Device | null>(null);
+  const savedMainDeviceIdRef = useRef<string | null>(null);
 
   // Antispark Smart Key State
   const [antisparkDevice, setAntisparkDevice] = useState<Device | null>(null);
@@ -569,7 +573,8 @@ export default function App() {
     try {
       setAntisparkStatusText('Connecting to Antispark...');
       addConsole(`[ANTISPARK] Connecting to ${scannedDev.name || scannedDev.id}...`);
-      const connected = await scannedDev.connect();
+      const isAlreadyConnected = await scannedDev.isConnected();
+      const connected = isAlreadyConnected ? scannedDev : await scannedDev.connect();
       setAntisparkDevice(connected);
       antisparkDeviceRef.current = connected;
       setIsAntisparkConnected(true);
@@ -789,8 +794,74 @@ export default function App() {
     }
   };
 
-  // Connect BLE (Multi-device: Scooter-ESP32 & Scooter-Antispark)
+  // Setup connected main scooter controller (services, characteristics, notifications)
+  const setupConnectedMainScooter = async (targetDevice: Device) => {
+    savedMainDeviceIdRef.current = targetDevice.id;
+    addConsole(`[BLE] Connecting to ${targetDevice.name || targetDevice.id}...`);
+    setStatusText('Connecting to Scooter-ESP32...');
+    try {
+      const isAlreadyConnected = await targetDevice.isConnected();
+      const connectedDevice = isAlreadyConnected ? targetDevice : await targetDevice.connect();
+
+      setDevice(connectedDevice);
+      deviceRef.current = connectedDevice;
+      setIsConnected(true);
+      setStatusText('Connected to Scooter-ESP32');
+      addConsole('[BLE] Main Scooter Connected!');
+      activateKeepAwakeAsync();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Setup disconnect listener
+      connectedDevice.onDisconnected(() => {
+        handleDisconnected();
+      });
+
+      // Discover services and characteristics
+      await connectedDevice.discoverAllServicesAndCharacteristics();
+      const services = await connectedDevice.services();
+      const service = services.find((s) => s.uuid.toLowerCase() === BLE_SVC_UUID.toLowerCase());
+      if (!service) throw new Error('Scooter Service not found');
+
+      const characteristics = await service.characteristics();
+      const char = characteristics.find((c) => c.uuid.toLowerCase() === BLE_CONSOLE_UUID.toLowerCase());
+      if (!char) throw new Error('Console Characteristic not found');
+
+      charRef.current = char;
+
+      // Subscribe to notifications
+      notifSubRef.current = char.monitor((err, notifiedChar) => {
+        if (err) {
+          console.warn('Notification error:', err);
+          return;
+        }
+        if (notifiedChar && notifiedChar.value) {
+          const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
+          parseTelemetry(text);
+        }
+      });
+
+      // Sync gear shift mode and query initial telemetry
+      setTimeout(() => {
+        sendCmd(gearShiftEnabled ? 'GS 1' : 'GS 0');
+        setTimeout(() => sendCmd('S'), 200);
+      }, 300);
+    } catch (e: any) {
+      console.warn('Main scooter connection failed:', e);
+      setStatusText('Connect failed: ' + e.message);
+      setIsConnected(false);
+      setDevice(null);
+      deviceRef.current = null;
+      charRef.current = null;
+    } finally {
+      setIsMainConnecting(false);
+      isMainConnectingRef.current = false;
+    }
+  };
+
+  // Connect BLE (Main Scooter Controller: Scooter-ESP32)
   const connectBle = async () => {
+    if (isMainConnectingRef.current || isConnected) return;
+
     const manager = getBleManager();
     if (!manager) {
       // In iOS Simulator, Bluetooth hardware does not exist
@@ -822,6 +893,8 @@ export default function App() {
       return;
     }
     try {
+      isMainConnectingRef.current = true;
+      setIsMainConnecting(true);
       setIsScanning(true);
       setStatusText('Checking Bluetooth state...');
       addConsole('[BLE] Checking Bluetooth state...');
@@ -831,103 +904,81 @@ export default function App() {
         setStatusText(btStatus.reason || 'Bluetooth not ready');
         addConsole(`[BLE] Error: ${btStatus.reason}`);
         setIsScanning(false);
+        setIsMainConnecting(false);
+        isMainConnectingRef.current = false;
         return;
       }
 
-      setStatusText('Scanning for Scooter & Antispark...');
-      addConsole('[BLE] Scanning for Scooter-ESP32 and Scooter-Antispark...');
+      setStatusText('Scanning for Scooter-ESP32...');
+      addConsole('[BLE] Scanning for Scooter-ESP32...');
+
+      // Stop any existing scans to avoid collision
+      try { manager.stopDeviceScan(); } catch (_) {}
+
+      // Stop scan after 10s if completed or timeout
+      const scanTimer = setTimeout(() => {
+        try { manager.stopDeviceScan(); } catch (_) {}
+        setIsScanning(false);
+        setIsMainConnecting(false);
+        isMainConnectingRef.current = false;
+        if (!charRef.current && !isConnected) {
+          setStatusText('Scooter not found. Tap to retry.');
+        }
+      }, 10000);
 
       manager.startDeviceScan(null, null, async (error, scannedDevice) => {
         if (error) {
+          clearTimeout(scanTimer);
           console.warn('Scan error:', error);
           setStatusText('Scan error: ' + error.message);
           setIsScanning(false);
+          setIsMainConnecting(false);
+          isMainConnectingRef.current = false;
           return;
         }
 
         // 1. Check for Scooter-ESP32 (Main controller)
         if (
           scannedDevice &&
-          (scannedDevice.name === 'Scooter-ESP32' || scannedDevice.localName === 'Scooter-ESP32') &&
-          !charRef.current
+          (scannedDevice.name === 'Scooter-ESP32' ||
+            scannedDevice.localName === 'Scooter-ESP32' ||
+            (scannedDevice.serviceUUIDs &&
+              scannedDevice.serviceUUIDs.some((u) => u.toLowerCase() === BLE_SVC_UUID.toLowerCase())))
         ) {
-          addConsole(`[BLE] Found ${scannedDevice.name}. Connecting...`);
-          try {
-            const connectedDevice = await scannedDevice.connect();
-            setDevice(connectedDevice);
-            setIsConnected(true);
-            setStatusText('Connected to Scooter-ESP32');
-            addConsole('[BLE] Main Scooter Connected!');
-            activateKeepAwakeAsync();
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          if (charRef.current || isConnected) return;
 
-            // Setup disconnect listener
-            connectedDevice.onDisconnected(() => {
-              handleDisconnected();
-            });
+          // CRITICAL: Stop scan immediately before initiating connection.
+          // In iOS CoreBluetooth, continuing to scan while calling connect causes duplicate
+          // advertisement callbacks and radio preemption, resulting in "Operation was cancelled".
+          clearTimeout(scanTimer);
+          try { manager.stopDeviceScan(); } catch (_) {}
+          setIsScanning(false);
 
-            // Discover services and characteristics
-            await connectedDevice.discoverAllServicesAndCharacteristics();
-            const services = await connectedDevice.services();
-            const service = services.find((s) => s.uuid.toLowerCase() === BLE_SVC_UUID.toLowerCase());
-            if (!service) throw new Error('Scooter Service not found');
-
-            const characteristics = await service.characteristics();
-            const char = characteristics.find((c) => c.uuid.toLowerCase() === BLE_CONSOLE_UUID.toLowerCase());
-            if (!char) throw new Error('Console Characteristic not found');
-
-            charRef.current = char;
-
-            // Subscribe to notifications
-            notifSubRef.current = char.monitor((err, notifiedChar) => {
-              if (err) {
-                console.warn('Notification error:', err);
-                return;
-              }
-              if (notifiedChar && notifiedChar.value) {
-                const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
-                parseTelemetry(text);
-              }
-            });
-
-            // Sync gear shift mode and query initial telemetry
-            setTimeout(() => {
-              sendCmd(gearShiftEnabled ? 'GS 1' : 'GS 0');
-              setTimeout(() => sendCmd('S'), 200);
-            }, 300);
-          } catch (e: any) {
-            console.warn('Main scooter connection failed:', e);
-            setStatusText('Connect failed: ' + e.message);
-            setIsConnected(false);
-          }
+          await setupConnectedMainScooter(scannedDevice);
+          return;
         }
 
-        // 2. Check for Scooter-Antispark (Secondary keyless controller)
+        // 2. Secondary check: Scooter-Antispark (if antispark is not already connected or connecting)
         if (
           scannedDevice &&
           (scannedDevice.name === 'Scooter-Antispark' ||
             scannedDevice.localName === 'Scooter-Antispark' ||
             (savedAntisparkIdRef.current !== null && scannedDevice.id === savedAntisparkIdRef.current) ||
-            (scannedDevice.serviceUUIDs && scannedDevice.serviceUUIDs.some((u) => u.toLowerCase() === BLE_ANTISPARK_SVC_UUID.toLowerCase()))) &&
+            (scannedDevice.serviceUUIDs &&
+              scannedDevice.serviceUUIDs.some((u) => u.toLowerCase() === BLE_ANTISPARK_SVC_UUID.toLowerCase()))) &&
           !antisparkCharRef.current &&
-          !isAntisparkConnectingRef.current
+          !isAntisparkConnectingRef.current &&
+          !isMainConnectingRef.current
         ) {
           connectAntisparkDevice(scannedDevice);
         }
       });
-
-      // Stop scan after 12s if completed or timeout
-      setTimeout(() => {
-        manager.stopDeviceScan();
-        setIsScanning(false);
-        if (!charRef.current && !isConnected) {
-          setStatusText('Scooter not found. Tap to retry.');
-        }
-      }, 12000);
     } catch (e: any) {
       console.warn('Scan exception:', e);
       setStatusText('Scan error: ' + e.message);
       setIsScanning(false);
+      setIsMainConnecting(false);
+      isMainConnectingRef.current = false;
     }
   };
 
@@ -941,19 +992,22 @@ export default function App() {
       notifSubRef.current.remove();
       notifSubRef.current = null;
     }
-    if (device) {
+    const devToCancel = deviceRef.current || device;
+    if (devToCancel) {
       try {
-        await device.cancelConnection();
+        await devToCancel.cancelConnection();
       } catch (e) {}
     }
     handleDisconnected();
-    await disconnectAntispark();
   };
 
   const handleDisconnected = () => {
     setIsConnected(false);
     setDevice(null);
+    deviceRef.current = null;
     charRef.current = null;
+    isMainConnectingRef.current = false;
+    setIsMainConnecting(false);
     setStatusText('Disconnected');
     addConsole('[BLE] Disconnected');
     deactivateKeepAwake();
@@ -2316,11 +2370,12 @@ export default function App() {
           <TouchableOpacity
             style={[styles.btnConnect, isConnected && styles.btnConnected]}
             onPress={isConnected ? disconnect : connectBle}
+            disabled={isScanning || isMainConnecting}
             activeOpacity={0.8}
           >
             <View style={[styles.statusDot, isConnected && styles.statusDotActive]} />
             <Text style={[styles.btnConnectText, isConnected && styles.btnConnectedText]}>
-              {isConnected ? 'Connected' : isScanning ? 'Scanning...' : 'Connect'}
+              {isConnected ? 'Connected' : (isScanning || isMainConnecting) ? 'Connecting...' : 'Connect'}
             </Text>
           </TouchableOpacity>
         </View>
