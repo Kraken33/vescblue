@@ -80,6 +80,13 @@ const DriveProfile PROFILE_S3 = PROFILE_3_UNLOCKED;
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f; // Strong default brake current in Amps
 
+// e-ABS (Anti-lock Braking System - Dualtron style pulsation)
+bool absEnabled = false;                    // Master toggle for e-ABS (persisted in prefs)
+bool absStrobeEnabled = true;               // Flash rear brake light during ABS (persisted in prefs)
+int absFrequencyHz = 10;                    // Pulsation frequency in Hz (2..20 Hz, default 10)
+const float ABS_MIN_SPEED_KMH = 3.0f;       // Below 3 km/h, apply solid brake to avoid standstill buzz
+unsigned long absCycleStartTime = 0;        // Timestamp when brake was engaged for zero-latency bite
+
 // Throttle ADC calibration (Idle ~0.67V = 830 counts, Full ~3.0V = 3720 counts)
 const int THROTTLE_MIN_RAW = 950;  // Threshold above idle (~0.77V)
 const int THROTTLE_MAX_RAW = 3700; // Full throttle (~3.0V)
@@ -451,13 +458,13 @@ void processVescIncoming() {
 }
 
 void updateKickStartForGear() {
-  bool isZeroStart = (currentGear >= 4);
+  bool isZeroStart = (unlockEnabled && bleClientConnected);
   if (isZeroStart) {
-    KICK_RPM_ERPM = 0.0f; // 4th gear (Sport): Zero start
+    KICK_RPM_ERPM = 0.0f; // Unlock mode: Kick-to-start disabled (Zero start)
   } else {
     KICK_RPM_ERPM = (kickErpmThreshold > 0.0f)
                         ? kickErpmThreshold
-                        : DEFAULT_KICK_ERPM; // 1st, 2nd, 3rd gears: Kick start
+                        : DEFAULT_KICK_ERPM; // Locked mode (Gears 1..3): Kick start
   }
   kickBlocked = (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
 }
@@ -550,7 +557,7 @@ int calculateMappedGear(int raw) {
 }
 
 void applyUnlockState() {
-  int raw = (lastRawGear > 0) ? lastRawGear : 1;
+  int raw = (lastRawGear > 0) ? lastRawGear : currentGear;
   int newGear = calculateMappedGear(raw);
   setGear(newGear);
 }
@@ -696,7 +703,7 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[280];
+    char buf[340];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -705,7 +712,7 @@ void bleHandleCommand(const String &cmd) {
     snprintf(buf, sizeof(buf),
              "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
              "LIM=%.0fkm/h KICK=%s(%.0f) UL=%d GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
-             "BC=%.1fA CAN=%d",
+             "BC=%.1fA ABS=%d AF=%d ABSS=%d CAN=%d",
              vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
              currentVoltageReading, currentRawThrottle,
              debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
@@ -714,7 +721,8 @@ void bleHandleCommand(const String &cmd) {
              (unlockEnabled && bleClientConnected) ? 1 : 0,
              (unlockEnabled && bleClientConnected) ? 1 : 0, ccStatus,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH",
-             userBrakeAmps, slaveCanId);
+             userBrakeAmps, absEnabled ? 1 : 0, absFrequencyHz,
+             absStrobeEnabled ? 1 : 0, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd == "UL" || cmd == "UNLOCK" || cmd == "GS" || cmd == "GSHIFT") {
     blePushLine("UNLOCK is " +
@@ -741,7 +749,7 @@ void bleHandleCommand(const String &cmd) {
         gearShiftEnabled = true;
         prefs.putBool("unlock_en", true);
         prefs.putBool("gear_shift", true);
-        applyUnlockState();
+        updateActiveProfile();
         blePushLine("UNLOCK set to ON (Gears 2: 25km/h, 3: Unlim) UL=1 G=" + String(currentGear));
       }
     } else {
@@ -750,7 +758,7 @@ void bleHandleCommand(const String &cmd) {
       secretComboUnlocked = false;
       prefs.putBool("unlock_en", false);
       prefs.putBool("gear_shift", false);
-      applyUnlockState();
+      updateActiveProfile();
       blePushLine("UNLOCK set to OFF (Gears 1: 5km/h, 2: 15km/h, 3: 20km/h) UL=0 G=" + String(currentGear));
     }
   } else if (cmd == "CC" || cmd == "CRUISE") {
@@ -861,6 +869,41 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR brake amps range 0..60");
     }
+  } else if (cmd == "ABS") {
+    blePushLine("e-ABS is " + String(absEnabled ? "ON" : "OFF") +
+                " (" + String(absFrequencyHz) + " Hz, Strobe=" +
+                String(absStrobeEnabled ? "ON" : "OFF") + ", Current=" +
+                String(userBrakeAmps, 1) + " A)");
+  } else if (cmd == "ABS 1" || cmd == "ABS ON") {
+    absEnabled = true;
+    prefs.putBool("abs_en", absEnabled);
+    blePushLine("e-ABS ENABLED (" + String(absFrequencyHz) + " Hz Dualtron pulsation)");
+  } else if (cmd == "ABS 0" || cmd == "ABS OFF") {
+    absEnabled = false;
+    prefs.putBool("abs_en", absEnabled);
+    blePushLine("e-ABS DISABLED (Solid braking)");
+  } else if (cmd.startsWith("AF ") || cmd.startsWith("ABSFREQ ")) {
+    int spIdx = cmd.indexOf(' ');
+    int freq = cmd.substring(spIdx + 1).toInt();
+    if (freq >= 2 && freq <= 20) {
+      absFrequencyHz = freq;
+      prefs.putInt("abs_freq", absFrequencyHz);
+      blePushLine("ABS FREQUENCY set to " + String(absFrequencyHz) + " Hz");
+    } else {
+      blePushLine("ERR ABS frequency range 2..20 Hz");
+    }
+  } else if (cmd == "ABSS") {
+    absStrobeEnabled = !absStrobeEnabled;
+    prefs.putBool("abs_strobe", absStrobeEnabled);
+    blePushLine("ABS STROBE: " + String(absStrobeEnabled ? "ENABLED" : "DISABLED"));
+  } else if (cmd == "ABSS 1" || cmd == "ABSS ON") {
+    absStrobeEnabled = true;
+    prefs.putBool("abs_strobe", absStrobeEnabled);
+    blePushLine("ABS STROBE: ENABLED");
+  } else if (cmd == "ABSS 0" || cmd == "ABSS OFF") {
+    absStrobeEnabled = false;
+    prefs.putBool("abs_strobe", absStrobeEnabled);
+    blePushLine("ABS STROBE: DISABLED");
   } else if (cmd == "CAN") {
     blePushLine("SLAVE CAN ID: " + String(slaveCanId));
   } else if (cmd.startsWith("CAN ")) {
@@ -921,7 +964,8 @@ void bleHandleCommand(const String &cmd) {
   } else if (cmd == "?") {
     blePushLine(
         "S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] "
-        "cruise | BEN [0/1] brake-en | BC [amps] brake | L [0/1] light | TL "
+        "cruise | BEN [0/1] brake-en | BC [amps] brake | ABS [0/1] e-abs | "
+        "AF [2-20] abs-freq | ABSS [0/1] abs-strobe | L [0/1] light | TL "
         "turnL | TR turnR | HAZ haz | DUAL [0/1] dual | CAN [id] | T [v b] test | K kick | "
         "R reboot");
   } else {
@@ -981,7 +1025,10 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
 };
 
 class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer *) { bleClientConnected = true; }
+  void onConnect(BLEServer *) {
+    bleClientConnected = true;
+    lastBleNotify = millis() + 800; // 800ms quiet window so mobile app completes GATT discovery & CCCD subscribe cleanly
+  }
   void onDisconnect(BLEServer *) {
     bleClientConnected = false;
     bleOtaActive = false;
@@ -999,6 +1046,7 @@ class ServerCallbacks : public BLEServerCallbacks {
 
 void bleInit() {
   BLEDevice::init(BLE_DEVICE_NAME);
+  BLEDevice::setMTU(517);
   bleServer = BLEDevice::createServer();
   bleServer->setCallbacks(new ServerCallbacks());
   BLEService *svc = bleServer->createService(BLE_SVC_UUID);
@@ -1042,6 +1090,12 @@ void setup() {
   brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps =
       prefs.getFloat("brake_amps", 25.0f);      // Default 25A strong e-brake
+  absEnabled = prefs.getBool("abs_en", false);  // Default e-ABS disabled
+  absStrobeEnabled = prefs.getBool("abs_strobe", true); // Default strobe rear light
+  absFrequencyHz = prefs.getInt("abs_freq", 10);// Default 10 Hz
+  if (absFrequencyHz < 2 || absFrequencyHz > 20) {
+    absFrequencyHz = 10;
+  }
   slaveCanId = prefs.getUChar("can_slave", 37); // Default CAN ID 37 (Second Motor)
   if (slaveCanId == 61) {
     // Automatically migrate legacy default (61) to the new secondary motor ID (37)
@@ -1145,8 +1199,29 @@ void loop() {
   // 5. Update Display UART (Non-blocking)
   processDisplayUart(vehicleSpeedMps);
 
-  // 5b. Update Lights Controller (Inputs, Debouncing, Blinkers & Brake Light)
-  lights.update(debouncedBrakeState);
+  // Track brake pull transition for zero-latency ABS cycle bite
+  static bool lastRawBrakeSeen = false;
+  if (debouncedBrakeState && !lastRawBrakeSeen) {
+    absCycleStartTime = now;
+  }
+  lastRawBrakeSeen = debouncedBrakeState;
+
+  // Evaluate e-ABS pulsation state
+  bool inAbsPulsation = false;
+  bool absBrakePulseActive = true;
+  if (debouncedBrakeState && absEnabled && (vehicleSpeedKmH >= ABS_MIN_SPEED_KMH) && (userBrakeAmps > 0.0f)) {
+    inAbsPulsation = true;
+    int freq = constrain(absFrequencyHz, 2, 20);
+    unsigned long periodMs = 1000 / freq;
+    unsigned long onTimeMs = (periodMs * 60) / 100; // 60% braking duty cycle
+    unsigned long elapsed = now - absCycleStartTime;
+    unsigned long cyclePos = elapsed % periodMs;
+    absBrakePulseActive = (cyclePos < onTimeMs);
+  }
+
+  // 5b. Update Lights Controller (Inputs, Debouncing, Blinkers & Brake Light / Strobe)
+  bool strobeActive = debouncedBrakeState && inAbsPulsation && absStrobeEnabled;
+  lights.update(debouncedBrakeState, strobeActive, absBrakePulseActive);
   if (lights.isFrontLightOn() != displayLightState) {
     displayLightState = lights.isFrontLightOn();
   }
@@ -1216,8 +1291,13 @@ void loop() {
       }
       targetAmps = 0.0f;
       if (userBrakeAmps > 0.0f) {
-        targetBrakeAmps = userBrakeAmps;
-        sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
+        if (absBrakePulseActive) {
+          targetBrakeAmps = userBrakeAmps;
+          sendDualBrakeCurrent(targetBrakeAmps, targetBrakeAmps);
+        } else {
+          targetBrakeAmps = 0.0f;
+          sendDualCurrent(0.0f, 0.0f); // 0A freewheel release pulse for e-ABS
+        }
       } else {
         targetBrakeAmps = 0.0f;
         sendDualCurrent(0.0f, 0.0f);
@@ -1262,7 +1342,7 @@ void loop() {
 
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[200];
+    char buf[250];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -1270,7 +1350,7 @@ void loop() {
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d",
+        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
         vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
         currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
         brakeEnabled ? 1 : 0, targetAmps, kickBlocked ? "HELD" : "ROLL",
@@ -1280,7 +1360,8 @@ void loop() {
         lights.isTurnRightActive() ? 1 : 0,
         dualMotorEnabled ? 1 : 0,
         (unlockEnabled && bleClientConnected) ? 1 : 0,
-        (unlockEnabled && bleClientConnected) ? 1 : 0);
+        (unlockEnabled && bleClientConnected) ? 1 : 0,
+        absEnabled ? 1 : 0, absFrequencyHz);
     blePushLine(String(buf));
   }
 

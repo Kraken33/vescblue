@@ -49,6 +49,7 @@ static Preferences prefs;
 
 static bool antisparkState = false;    // false = OFF (LOW), true = ON (HIGH)
 static bool beaconActive = true;       // false when manually turned OFF via app
+static bool autoCutoffEnabled = true;  // false = stays ON on BLE disconnect, true = auto power cut
 
 static bool isClientConnected = false;
 static bool oldClientConnected = false;
@@ -81,8 +82,12 @@ class ServerCallbacks : public BLEServerCallbacks {
 
   void onDisconnect(BLEServer *pServer) override {
     isClientConnected = false;
-    Serial.println(F("[ANTISPARK] Signal lost - turning Antispark OFF automatically"));
-    setAntisparkState(false, "BLE Signal Lost (Auto-off)");
+    if (autoCutoffEnabled) {
+      Serial.println(F("[ANTISPARK] Signal lost - turning Antispark OFF automatically"));
+      setAntisparkState(false, "BLE Signal Lost (Auto-off)");
+    } else {
+      Serial.println(F("[ANTISPARK] Signal lost - Auto-off DISABLED (keeping Antispark ON)"));
+    }
   }
 };
 
@@ -126,9 +131,10 @@ void notifyStatus() {
 
   unsigned long uptimeSec = (millis() - bootTimestamp) / 1000;
   char buf[64];
-  snprintf(buf, sizeof(buf), "PWR=%d UP=%lu",
+  snprintf(buf, sizeof(buf), "PWR=%d UP=%lu AUTO=%d",
            antisparkState ? 1 : 0,
-           uptimeSec);
+           uptimeSec,
+           autoCutoffEnabled ? 1 : 0);
 
   pCtrlChar->setValue((uint8_t *)buf, strlen(buf));
   pCtrlChar->notify();
@@ -150,6 +156,18 @@ void handleCommand(const String &cmd) {
     prefs.putBool("beacon", false);
     setAntisparkState(false, "BLE App Command");
   } 
+  else if (cmd.startsWith("AUTO 1") || cmd.equalsIgnoreCase("AUTOCUTOFF 1")) {
+    autoCutoffEnabled = true;
+    prefs.putBool("autoCutoff", true);
+    Serial.println(F("[ANTISPARK] Auto-cutoff on disconnect ENABLED"));
+    notifyStatus();
+  }
+  else if (cmd.startsWith("AUTO 0") || cmd.equalsIgnoreCase("AUTOCUTOFF 0")) {
+    autoCutoffEnabled = false;
+    prefs.putBool("autoCutoff", false);
+    Serial.println(F("[ANTISPARK] Auto-cutoff on disconnect DISABLED (Scooter stays ON when app disconnects)"));
+    notifyStatus();
+  }
   else if (cmd.equalsIgnoreCase("STATUS") || cmd.equalsIgnoreCase("S")) {
     notifyStatus();
   } 
@@ -231,9 +249,10 @@ void setup() {
   // Load preferences
   prefs.begin("antispark", false);
   beaconActive = prefs.getBool("beacon", true);
+  autoCutoffEnabled = prefs.getBool("autoCutoff", true);
 
   Serial.printf("[ANTISPARK] Pins: Antispark +=GPIO %d, Antispark -=GPIO %d, LED=GPIO %d\n", ANTISPARK_PIN, ANTISPARK_GND_PIN, STATUS_LED_PIN);
-  Serial.printf("[ANTISPARK] Config: Beacon=%d\n", beaconActive);
+  Serial.printf("[ANTISPARK] Config: Beacon=%d, AutoCutoff=%d\n", beaconActive, autoCutoffEnabled);
 
   // Initialize BLE
   BLEDevice::init(BLE_DEVICE_NAME);
@@ -289,8 +308,8 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // Auto-cutoff: If disconnected while Antispark is ON, turn OFF immediately
-  if (!isClientConnected && antisparkState) {
+  // Auto-cutoff: If disconnected while Antispark is ON and autoCutoff is active, turn OFF
+  if (autoCutoffEnabled && !isClientConnected && antisparkState) {
     setAntisparkState(false, "Disconnected Safety Cutoff");
   }
 

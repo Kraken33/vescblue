@@ -122,10 +122,17 @@ void LightsController::stopAllTurn() {
     digitalWrite(PIN_OUT_TURN_R, LOW);
 }
 
-void LightsController::update(bool brakePressed) {
-    // 1. Rear Light Output (Solid ON when front light is ON or brake is engaged)
-    backLightOn = (frontLightOn || brakePressed);
-    digitalWrite(PIN_OUT_BRAKE, backLightOn ? HIGH : LOW);
+void LightsController::update(bool brakePressed, bool strobeActive, bool strobeState) {
+    // 1. Rear Light Output
+    if (strobeActive) {
+        // Fast flashing strobe override (e.g. e-ABS pulsation)
+        backLightOn = strobeState;
+        digitalWrite(PIN_OUT_BRAKE, strobeState ? HIGH : LOW);
+    } else {
+        // Solid ON when front light is ON or brake is engaged
+        backLightOn = (frontLightOn || brakePressed);
+        digitalWrite(PIN_OUT_BRAKE, backLightOn ? HIGH : LOW);
+    }
 
     // 2. Physical Front Light Switch Debounce (Momentary push button)
     bool lightReading = digitalRead(PIN_IN_LIGHT);

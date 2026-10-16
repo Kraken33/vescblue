@@ -88,6 +88,9 @@ export default function App() {
   const [brakeEnabled, setBrakeEnabled] = useState(true);
   const [activeGear, setActiveGear] = useState(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
+  const [absEnabled, setAbsEnabled] = useState(false);
+  const [absFreq, setAbsFreq] = useState(10);
+  const [absStrobe, setAbsStrobe] = useState(true);
   const [unlockEnabled, setUnlockEnabled] = useState(false);
   const gearShiftEnabled = unlockEnabled;
   const setGearShiftEnabled = setUnlockEnabled;
@@ -193,6 +196,7 @@ export default function App() {
   const isMainConnectingRef = useRef<boolean>(false);
   const deviceRef = useRef<Device | null>(null);
   const savedMainDeviceIdRef = useRef<string | null>(null);
+  const lastTelemetryTimeRef = useRef<number>(0);
 
   // Antispark Smart Key State
   const [antisparkDevice, setAntisparkDevice] = useState<Device | null>(null);
@@ -200,6 +204,7 @@ export default function App() {
   const [antisparkStatusText, setAntisparkStatusText] = useState('Disconnected');
   const [isAntisparkConnecting, setIsAntisparkConnecting] = useState(false);
   const [antisparkState, setAntisparkState] = useState(false); // true = ON (GPIO 10 HIGH), false = OFF (GPIO 10 LOW)
+  const [antisparkAutoCutoff, setAntisparkAutoCutoff] = useState<boolean>(true); // true = auto turn off on disconnect, false = stays ON
   // Apple iBeacon Hands-Free Auto Key State
   const [iBeaconAutoKey, setIBeaconAutoKey] = useState<boolean>(true);
   const [iBeaconStatus, setIBeaconStatus] = useState<string>('Standby');
@@ -219,6 +224,7 @@ export default function App() {
   const antisparkNotifSubRef = useRef<Subscription | null>(null);
   const speedRef = useRef<number>(0.0);
   const antisparkStateRef = useRef<boolean>(false);
+  const antisparkAutoCutoffRef = useRef<boolean>(true);
   const iBeaconAutoKeyRef = useRef<boolean>(true);
   const iBeaconSensitivityRef = useRef<'immediate' | 'near' | 'far'>('near');
   const manualDisconnectRef = useRef<boolean>(false);
@@ -241,6 +247,21 @@ export default function App() {
     manualOverrideOffRef.current = manualOverrideOff;
     ScooterBeacon.setManualOverrideOff(manualOverrideOff);
   }, [manualOverrideOff]);
+
+  // Telemetry watchdog: if connected and no notifications received for 1.8s, poll with 'S'
+  useEffect(() => {
+    if (!isConnected || isDemoMode) return;
+    const interval = setInterval(() => {
+      if (
+        charRef.current &&
+        !isWritingRef.current &&
+        Date.now() - lastTelemetryTimeRef.current > 1800
+      ) {
+        sendCmd('S');
+      }
+    }, 1500);
+    return () => clearInterval(interval);
+  }, [isConnected, isDemoMode]);
 
   // Request Android Bluetooth Permissions
   const requestAndroidPermissions = async () => {
@@ -554,6 +575,21 @@ export default function App() {
       antisparkStateRef.current = isPwrOn;
       setAntisparkState(isPwrOn);
     }
+    if (autoMatch) {
+      const isAutoOn = autoMatch[1] === '1';
+      antisparkAutoCutoffRef.current = isAutoOn;
+      setAntisparkAutoCutoff(isAutoOn);
+    }
+  };
+
+  const toggleAntisparkAutoCutoff = async (enabled: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setAntisparkAutoCutoff(enabled);
+    antisparkAutoCutoffRef.current = enabled;
+    addConsole(`[ANTISPARK] Auto-cutoff on disconnect set to: ${enabled ? 'ENABLED' : 'DISABLED'}`);
+    if (antisparkCharRef.current) {
+      await sendAntisparkCmd(enabled ? 'AUTO 1' : 'AUTO 0');
+    }
   };
 
   // Background auto-reconnect is disabled: Connection is initiated manually via the dedicated app button
@@ -614,8 +650,9 @@ export default function App() {
         }
       });
 
-      // Assert power ON command to ESP32
+      // Assert power ON command to ESP32 and query latest configuration
       setTimeout(() => {
+        sendAntisparkCmd('STATUS');
         sendAntisparkCmd('PWR 1');
       }, 300);
     } catch (e: any) {
@@ -783,11 +820,21 @@ export default function App() {
       autoReconnectTimerRef.current = null;
     }
 
-    // Signal lost: immediately set power to OFF
-    antisparkStateRef.current = false;
-    setAntisparkState(false);
-    setAntisparkStatusText('Disconnected (Power OFF)');
-    addConsole('[ANTISPARK] Signal lost. Antispark turned OFF automatically.');
+    if (manualDisconnectRef.current || antisparkAutoCutoffRef.current) {
+      // Signal lost with auto-cutoff active OR manual disconnect: power turned OFF
+      antisparkStateRef.current = false;
+      setAntisparkState(false);
+      setAntisparkStatusText('Disconnected (Power OFF)');
+      addConsole('[ANTISPARK] Signal lost. Antispark turned OFF automatically.');
+    } else {
+      // Auto-cutoff disabled: Scooter power remains ON across disconnects
+      if (antisparkStateRef.current) {
+        setAntisparkStatusText('Disconnected • Power Kept ON');
+        addConsole('[ANTISPARK] Disconnected. Scooter power kept ON (Auto-off disabled).');
+      } else {
+        setAntisparkStatusText('Disconnected (Power OFF)');
+      }
+    }
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const manager = getBleManager();
@@ -807,18 +854,14 @@ export default function App() {
 
       setDevice(connectedDevice);
       deviceRef.current = connectedDevice;
-      setIsConnected(true);
-      setStatusText('Connected to Scooter-ESP32');
-      addConsole('[BLE] Main Scooter Connected!');
-      activateKeepAwakeAsync();
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Setup disconnect listener
-      connectedDevice.onDisconnected(() => {
-        handleDisconnected();
-      });
+      // Negotiate higher MTU so ~90-byte telemetry packet is not truncated (especially on Android)
+      try {
+        await connectedDevice.requestMTU(512);
+      } catch (_) {}
 
-      // Discover services and characteristics
+      // Discover services and characteristics before marking connected
+      setStatusText('Discovering services...');
       await connectedDevice.discoverAllServicesAndCharacteristics();
       const services = await connectedDevice.services();
       const service = services.find((s) => s.uuid.toLowerCase() === BLE_SVC_UUID.toLowerCase());
@@ -830,10 +873,17 @@ export default function App() {
 
       charRef.current = char;
 
-      // Subscribe to notifications
+      // Clean up any lingering subscription before starting a new one
+      if (notifSubRef.current) {
+        try { notifSubRef.current.remove(); } catch (_) {}
+        notifSubRef.current = null;
+      }
+
+      // Subscribe to live notifications
       notifSubRef.current = char.monitor((err, notifiedChar) => {
         if (err) {
           console.warn('Notification error:', err);
+          addConsole(`[NOTIF-ERR] ${err.message}`);
           return;
         }
         if (notifiedChar && notifiedChar.value) {
@@ -842,11 +892,28 @@ export default function App() {
         }
       });
 
-      // Sync unlock mode and query initial telemetry
-      setTimeout(() => {
-        sendCmd(unlockEnabled ? 'UL 1' : 'UL 0');
-        setTimeout(() => sendCmd('S'), 200);
-      }, 300);
+      // Mark connected only once characteristic is confirmed and monitored
+      setIsConnected(true);
+      setStatusText('Connected to Scooter-ESP32');
+      addConsole('[BLE] Main Scooter Connected & Telemetry Active!');
+      activateKeepAwakeAsync();
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+
+      // Setup disconnect listener
+      connectedDevice.onDisconnected(() => {
+        handleDisconnected();
+      });
+
+      // Sequential initial handshake: sync unlock profile, then request initial status ('S')
+      setTimeout(async () => {
+        try {
+          await sendCmd(unlockEnabled ? 'UL 1' : 'UL 0');
+          await new Promise((r) => setTimeout(r, 150));
+          await sendCmd('S');
+        } catch (e) {
+          console.warn('Initial telemetry sync failed:', e);
+        }
+      }, 250);
     } catch (e: any) {
       console.warn('Main scooter connection failed:', e);
       setStatusText('Connect failed: ' + e.message);
@@ -854,6 +921,10 @@ export default function App() {
       setDevice(null);
       deviceRef.current = null;
       charRef.current = null;
+      if (notifSubRef.current) {
+        try { notifSubRef.current.remove(); } catch (_) {}
+        notifSubRef.current = null;
+      }
     } finally {
       setIsMainConnecting(false);
       isMainConnectingRef.current = false;
@@ -1004,6 +1075,10 @@ export default function App() {
   };
 
   const handleDisconnected = () => {
+    if (notifSubRef.current) {
+      try { notifSubRef.current.remove(); } catch (_) {}
+      notifSubRef.current = null;
+    }
     setIsConnected(false);
     setDevice(null);
     deviceRef.current = null;
@@ -1018,6 +1093,7 @@ export default function App() {
 
   // Parse Telemetry packet
   const parseTelemetry = (str: string) => {
+    lastTelemetryTimeRef.current = Date.now();
     // Format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
     addConsole(str);
 
@@ -1037,6 +1113,9 @@ export default function App() {
     const tlMatch = str.match(/\bTL=(\d+)/);
     const trMatch = str.match(/\bTR=(\d+)/);
     const ddmMatch = str.match(/\bDDM=(\d+)/);
+    const absMatch = str.match(/\bABS=(\d+)/);
+    const afMatch = str.match(/\bAF=(\d+)/);
+    const abssMatch = str.match(/\bABSS=(\d+)/);
 
     if (spdMatch) setSpeed(parseFloat(spdMatch[1]));
     if (vMatch) setVoltage(parseFloat(vMatch[1]).toFixed(1));
@@ -1045,12 +1124,20 @@ export default function App() {
     if (brkMatch) setIsBraking(brkMatch[1] === '1');
     if (benMatch) setBrakeEnabled(benMatch[1] === '1');
     if (bcMatch) setBrakeAmps(parseFloat(bcMatch[1]));
+    if (absMatch) setAbsEnabled(absMatch[1] === '1');
+    if (afMatch) setAbsFreq(parseInt(afMatch[1], 10));
+    if (abssMatch) setAbsStrobe(abssMatch[1] === '1');
     if (ulMatch) setUnlockEnabled(ulMatch[1] === '1');
     else if (gsMatch) setUnlockEnabled(gsMatch[1] === '1');
     if (lMatch) setFrontLightOn(lMatch[1] === '1');
     if (tlMatch) setTurnLeftOn(tlMatch[1] === '1');
     if (trMatch) setTurnRightOn(trMatch[1] === '1');
     if (ddmMatch) setDdmActive(ddmMatch[1] === '1');
+
+    if (str.includes('e-ABS ENABLED')) setAbsEnabled(true);
+    else if (str.includes('e-ABS DISABLED')) setAbsEnabled(false);
+    if (str.includes('ABS STROBE: ENABLED')) setAbsStrobe(true);
+    else if (str.includes('ABS STROBE: DISABLED')) setAbsStrobe(false);
 
     if (str.includes('UNLOCK: RELOCKED')) {
       setUnlockEnabled(false);
@@ -1207,6 +1294,26 @@ export default function App() {
     sendCmd(`BEN ${val ? 1 : 0}`);
   };
 
+  const toggleAbs = (val: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setAbsEnabled(val);
+    sendCmd(val ? 'ABS 1' : 'ABS 0');
+  };
+
+  const toggleAbsStrobe = (val: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setAbsStrobe(val);
+    sendCmd(val ? 'ABSS 1' : 'ABSS 0');
+  };
+
+  const handleAbsFreqChange = (val: number) => {
+    setAbsFreq(Math.round(val));
+  };
+
+  const handleAbsFreqComplete = (val: number) => {
+    sendCmd(`AF ${Math.round(val)}`);
+  };
+
   const toggleCruiseControl = (val: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setCruiseEnabled(val);
@@ -1280,7 +1387,11 @@ export default function App() {
       <View style={styles.badgeRow}>
         <View style={[styles.badge, isBraking ? styles.badgeBraking : (!brakeEnabled ? styles.badgeDisabled : null)]}>
           <Text style={[styles.badgeText, isBraking && styles.badgeTextBraking]}>
-            {!brakeEnabled ? '⚪ BRAKE OFF' : isBraking ? '🛑 BRAKING' : 'BRAKE OK'}
+            {!brakeEnabled
+              ? '⚪ BRAKE OFF'
+              : isBraking
+              ? (absEnabled ? '⚡ e-ABS' : '🛑 BRAKING')
+              : (absEnabled ? 'ABS READY' : 'BRAKE OK')}
           </Text>
         </View>
         {cruiseEnabled && (
@@ -1447,11 +1558,17 @@ export default function App() {
               </Text>
               <View style={{ flex: 1 }}>
                 <Text style={styles.btnDedicatedPowerConnectText}>
-                  {isAntisparkConnecting ? 'CONNECTING TO ANTISPARK...' : 'CONNECT & POWER ON'}
+                  {isAntisparkConnecting
+                    ? 'CONNECTING TO ANTISPARK...'
+                    : antisparkState
+                    ? 'RECONNECT TO ANTISPARK (POWER ON)'
+                    : 'CONNECT & POWER ON'}
                 </Text>
                 <Text style={styles.btnDedicatedPowerConnectSub}>
                   {isAntisparkConnecting
                     ? 'Scanning for Scooter-Antispark nearby...'
+                    : antisparkState
+                    ? 'Scooter is currently running. Tap to reconnect app control.'
                     : 'Tap to connect to Scooter-Antispark and engage power'}
                 </Text>
               </View>
@@ -1459,11 +1576,42 @@ export default function App() {
           )}
         </View>
 
-        {/* Automatic Cutoff Notice */}
-        <View style={styles.autoCutoffNoticeBox}>
-          <Text style={styles.autoCutoffNoticeText}>
-            🛡️ <Text style={{ fontWeight: '700', color: '#38bdf8' }}>Automatic Power Cutoff:</Text> When you walk away or Bluetooth signal is lost, the Antispark turns OFF automatically. To reconnect and turn on, open the app and tap 'CONNECT & POWER ON'.
-          </Text>
+        {/* Automatic Cutoff Toggle Card */}
+        <View style={styles.autoCutoffCard}>
+          <View style={styles.autoCutoffHeaderRow}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+                <Text style={styles.autoCutoffTitle}>🛡️ AUTO TURN OFF ON DISCONNECT</Text>
+                <View
+                  style={[
+                    styles.autoCutoffBadge,
+                    antisparkAutoCutoff ? styles.autoCutoffBadgeActive : styles.autoCutoffBadgeDisabled,
+                  ]}
+                >
+                  <Text
+                    style={[
+                      styles.autoCutoffBadgeText,
+                      antisparkAutoCutoff ? styles.autoCutoffBadgeTextActive : styles.autoCutoffBadgeTextDisabled,
+                    ]}
+                  >
+                    {antisparkAutoCutoff ? 'AUTO-OFF ACTIVE' : 'STAYS ON'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.autoCutoffDesc}>
+                {antisparkAutoCutoff
+                  ? 'Power turns OFF automatically when Bluetooth signal is lost, app is closed, or phone walks away.'
+                  : '⚠️ Scooter stays powered ON if app closes, reloads during debugging, or disconnects.'}
+              </Text>
+            </View>
+            <Switch
+              value={antisparkAutoCutoff}
+              onValueChange={toggleAntisparkAutoCutoff}
+              trackColor={{ false: '#334155', true: '#38bdf8' }}
+              thumbColor={antisparkAutoCutoff ? '#ffffff' : '#94a3b8'}
+              ios_backgroundColor="#334155"
+            />
+          </View>
         </View>
 
         {/* Hero State Banner */}
@@ -1722,8 +1870,8 @@ export default function App() {
           </View>
           <Text style={styles.gearShiftDesc}>
             {unlockEnabled
-              ? 'Handlebar: 2→25 km/h, 3→Unlimited. Selecting 1st gear instantly locks scooter. Auto-locks on disconnect.'
-              : 'Handlebar: 1→5 km/h, 2→15 km/h, 3→20 km/h. Shift to Gear 2 or 3 to unlock.'}
+              ? 'Handlebar: 2→25 km/h, 3→Unlimited. Zero-start active (kick disabled). Gear 1 locks scooter. Auto-locks on disconnect.'
+              : 'Handlebar: 1→5 km/h, 2→15 km/h, 3→20 km/h. Kick-start active. Shift to Gear 2 or 3 to unlock.'}
           </Text>
         </View>
         <Switch
@@ -1798,6 +1946,7 @@ export default function App() {
 
   const renderBrakeCard = () => (
     <View style={styles.controlsCard}>
+      {/* 1. Physical E-Brake Sensor Switch */}
       <View style={styles.brakeSwitchRow}>
         <View style={styles.brakeSwitchTextCol}>
           <View style={styles.brakeSwitchTitleRow}>
@@ -1823,6 +1972,80 @@ export default function App() {
         />
       </View>
 
+      {/* 2. Dualtron e-ABS Pulsation Switch */}
+      <View style={styles.brakeSwitchRow}>
+        <View style={styles.brakeSwitchTextCol}>
+          <View style={styles.brakeSwitchTitleRow}>
+            <Text style={styles.controlLabel}>e-ABS Pulsation</Text>
+            <View style={[styles.brakeBadge, absEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+              <Text style={[styles.brakeBadgeText, absEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                {absEnabled ? `DUALTRON (${absFreq} Hz)` : 'OFF (SOLID)'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.gearShiftDesc}>
+            {absEnabled
+              ? `Anti-lock pulsation (${absFreq} Hz) active above 3 km/h to prevent wheel lockup`
+              : 'Continuous solid regenerative braking without pulsation'}
+          </Text>
+        </View>
+        <Switch
+          value={absEnabled}
+          onValueChange={toggleAbs}
+          trackColor={{ false: '#1e293b', true: '#f43f5e' }}
+          thumbColor={absEnabled ? '#ffffff' : '#64748b'}
+          ios_backgroundColor="#1e293b"
+        />
+      </View>
+
+      {/* 3. e-ABS Strobe Light & Frequency Options */}
+      {absEnabled && (
+        <>
+          <View style={styles.brakeSwitchRow}>
+            <View style={styles.brakeSwitchTextCol}>
+              <View style={styles.brakeSwitchTitleRow}>
+                <Text style={styles.controlLabel}>Rear Strobe Light</Text>
+                <View style={[styles.brakeBadge, absStrobe ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+                  <Text style={[styles.brakeBadgeText, absStrobe ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                    {absStrobe ? 'STROBE ON' : 'SOLID ON'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.gearShiftDesc}>
+                {absStrobe
+                  ? 'Flashes rear brake light in real time with ABS motor pulses'
+                  : 'Keeps rear brake light solid during ABS braking'}
+              </Text>
+            </View>
+            <Switch
+              value={absStrobe}
+              onValueChange={toggleAbsStrobe}
+              trackColor={{ false: '#1e293b', true: '#f43f5e' }}
+              thumbColor={absStrobe ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
+            />
+          </View>
+
+          <View style={styles.sliderHeader}>
+            <Text style={styles.controlLabel}>ABS Frequency</Text>
+            <Text style={styles.sliderVal}>{absFreq} Hz</Text>
+          </View>
+          <Slider
+            style={styles.slider}
+            minimumValue={2}
+            maximumValue={20}
+            step={1}
+            value={absFreq}
+            onValueChange={handleAbsFreqChange}
+            onSlidingComplete={handleAbsFreqComplete}
+            minimumTrackTintColor="#f43f5e"
+            maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+            thumbTintColor="#f43f5e"
+          />
+        </>
+      )}
+
+      {/* 4. E-Brake Strength Slider */}
       <View style={styles.sliderHeader}>
         <Text style={styles.controlLabel}>E-Brake Strength</Text>
         <Text style={styles.sliderVal}>{brakeAmps.toFixed(1)} A</Text>
@@ -1831,7 +2054,7 @@ export default function App() {
       <Slider
         style={styles.slider}
         minimumValue={0}
-        maximumValue={50}
+        maximumValue={60}
         step={1}
         value={brakeAmps}
         onValueChange={(val) => setBrakeAmps(val)}
@@ -3358,18 +3581,56 @@ const styles = StyleSheet.create({
     fontSize: 13,
     fontWeight: '700',
   },
-  autoCutoffNoticeBox: {
-    backgroundColor: 'rgba(56, 189, 248, 0.08)',
+  // Auto Cutoff Toggle Card
+  autoCutoffCard: {
+    backgroundColor: 'rgba(56, 189, 248, 0.05)',
     borderWidth: 1,
     borderColor: 'rgba(56, 189, 248, 0.25)',
-    borderRadius: 12,
-    paddingHorizontal: 12,
-    paddingVertical: 10,
+    borderRadius: 14,
+    padding: 12,
   },
-  autoCutoffNoticeText: {
+  autoCutoffHeaderRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  autoCutoffTitle: {
+    color: '#38bdf8',
+    fontSize: 12,
+    fontWeight: '800',
+    letterSpacing: 0.5,
+  },
+  autoCutoffDesc: {
     color: '#94a3b8',
-    fontSize: 11,
-    lineHeight: 16,
+    fontSize: 10.5,
+    lineHeight: 14,
+    marginTop: 2,
+  },
+  autoCutoffBadge: {
+    paddingHorizontal: 6,
+    paddingVertical: 2,
+    borderRadius: 6,
+    borderWidth: 1,
+  },
+  autoCutoffBadgeActive: {
+    backgroundColor: 'rgba(56, 189, 248, 0.18)',
+    borderColor: '#38bdf8',
+  },
+  autoCutoffBadgeDisabled: {
+    backgroundColor: 'rgba(245, 158, 11, 0.18)',
+    borderColor: '#f59e0b',
+  },
+  autoCutoffBadgeText: {
+    fontSize: 8.5,
+    fontWeight: '900',
+    letterSpacing: 0.5,
+  },
+  autoCutoffBadgeTextActive: {
+    color: '#38bdf8',
+  },
+  autoCutoffBadgeTextDisabled: {
+    color: '#f59e0b',
   },
 
   // Hero Banner for Bench Testing

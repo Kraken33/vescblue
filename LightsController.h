@@ -26,7 +26,7 @@ class LightsController {
 public:
     LightsController();
     void begin();
-    void update(bool brakePressed);
+    void update(bool brakePressed, bool strobeActive = false, bool strobeState = false);
 
     // Light toggles & setters
     void setFrontLight(bool state);
