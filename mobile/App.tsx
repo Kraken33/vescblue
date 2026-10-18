@@ -192,11 +192,18 @@ export default function App() {
   // Refs for subscriptions and active characteristic
   const charRef = useRef<Characteristic | null>(null);
   const notifSubRef = useRef<Subscription | null>(null);
+  const disconnectSubRef = useRef<Subscription | null>(null);
+  const handshakeTimerRef = useRef<any>(null);
+  const espGearRef = useRef<number>(0);
   const isWritingRef = useRef(false);
   const isMainConnectingRef = useRef<boolean>(false);
   const deviceRef = useRef<Device | null>(null);
   const savedMainDeviceIdRef = useRef<string | null>(null);
   const lastTelemetryTimeRef = useRef<number>(0);
+  // Command queue: prevents silent drops when a write is already in progress
+  const cmdQueueRef = useRef<string[]>([]);
+  // Stable ref to parseTelemetry so monitor callback always calls the latest version (avoids stale closure)
+  const parseTelemetryRef = useRef<((str: string) => void) | null>(null);
 
   // Antispark Smart Key State
   const [antisparkDevice, setAntisparkDevice] = useState<Device | null>(null);
@@ -222,6 +229,10 @@ export default function App() {
   // Antispark Refs (synchronized for interval and BLE callbacks)
   const antisparkCharRef = useRef<Characteristic | null>(null);
   const antisparkNotifSubRef = useRef<Subscription | null>(null);
+  const antisparkDisconnectSubRef = useRef<Subscription | null>(null);
+  const antisparkScanTimerRef = useRef<any>(null);
+  const mainScanTimerRef = useRef<any>(null);
+  const parseAntisparkTelemetryRef = useRef<((str: string) => void) | null>(null);
   const speedRef = useRef<number>(0.0);
   const antisparkStateRef = useRef<boolean>(false);
   const antisparkAutoCutoffRef = useRef<boolean>(true);
@@ -252,9 +263,9 @@ export default function App() {
   useEffect(() => {
     if (!isConnected || isDemoMode) return;
     const interval = setInterval(() => {
+      // Use deviceRef (not charRef) since writes now go via manager-level UUID API
       if (
-        charRef.current &&
-        !isWritingRef.current &&
+        deviceRef.current &&
         Date.now() - lastTelemetryTimeRef.current > 1800
       ) {
         sendCmd('S');
@@ -333,6 +344,8 @@ export default function App() {
   }, []);
 
   const addConsole = (msg: string) => {
+    console.log('[ScooterBLE]', msg);
+    ScooterBeacon.nativeLog(msg);
     setConsoleLines((prev) => {
       const next = [...prev, msg];
       return next.length > 50 ? next.slice(-40) : next;
@@ -393,7 +406,13 @@ export default function App() {
         return;
       }
 
-      if (iBeaconAutoKeyRef.current && !antisparkCharRef.current && !isAntisparkConnectingRef.current) {
+      if (
+        iBeaconAutoKeyRef.current &&
+        !antisparkDeviceRef.current &&
+        !antisparkCharRef.current &&
+        !isAntisparkConnectingRef.current &&
+        !isMainConnectingRef.current
+      ) {
         addConsole('[iBEACON] Auto Key: Waking from pocket, auto-connecting to Antispark...');
         scanAndConnectAntispark();
       }
@@ -455,8 +474,10 @@ export default function App() {
       if (
         shouldTrigger &&
         iBeaconAutoKeyRef.current &&
+        !antisparkDeviceRef.current &&
         !antisparkCharRef.current &&
         !isAntisparkConnectingRef.current &&
+        !isMainConnectingRef.current &&
         !antisparkStateRef.current
       ) {
         addConsole(`[iBEACON] 🎯 Target Proximity reached (${proxStr}, ${event.accuracy > 0 ? event.accuracy.toFixed(1) + 'm' : event.rssi + 'dBm'}). Auto-Power ON!`);
@@ -515,12 +536,15 @@ export default function App() {
 
     // Optimistic Zero-Latency UI feedback
     if (cmdStr === 'PWR 1' || cmdStr === 'ON') {
+      const wasManualOff = manualOverrideOffRef.current || ScooterBeacon.isManualOverrideOff();
       manualOverrideOffRef.current = false;
       setManualOverrideOff(false);
-      ScooterBeacon.setManualOverrideOff(false);
-      if (iBeaconAutoKeyRef.current) {
-        ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
-        setIBeaconStatus('Armed • Listening');
+      if (wasManualOff) {
+        ScooterBeacon.setManualOverrideOff(false);
+        if (iBeaconAutoKeyRef.current) {
+          ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+          setIBeaconStatus('Armed • Listening');
+        }
       }
       antisparkStateRef.current = true;
       setAntisparkState(true);
@@ -537,25 +561,29 @@ export default function App() {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     }
 
-    if (!antisparkCharRef.current) {
+    const antisparkDevId = antisparkDeviceRef.current?.id ?? savedAntisparkIdRef.current;
+    const mgr = getBleManager();
+    if (!mgr || !antisparkDevId || !antisparkDeviceRef.current) {
       addConsole(`[ANTISPARK] Cannot send '${cmdStr}' - Antispark not connected`);
       return;
     }
 
     try {
       const base64Data = Buffer.from(cmdStr, 'utf-8').toString('base64');
-      if (cmdStr.startsWith('PWR') || cmdStr === 'ON' || cmdStr === 'OFF') {
-        try {
-          await antisparkCharRef.current.writeWithResponse(base64Data);
-        } catch (_) {
-          await antisparkCharRef.current.writeWithoutResponse(base64Data);
-        }
-      } else {
-        try {
-          await antisparkCharRef.current.writeWithoutResponse(base64Data);
-        } catch (_) {
-          await antisparkCharRef.current.writeWithResponse(base64Data);
-        }
+      try {
+        await mgr.writeCharacteristicWithResponseForDevice(
+          antisparkDevId,
+          BLE_ANTISPARK_SVC_UUID,
+          BLE_ANTISPARK_CTRL_UUID,
+          base64Data
+        );
+      } catch (_) {
+        await mgr.writeCharacteristicWithoutResponseForDevice(
+          antisparkDevId,
+          BLE_ANTISPARK_SVC_UUID,
+          BLE_ANTISPARK_CTRL_UUID,
+          base64Data
+        );
       }
       addConsole(`[ANTISPARK-TX] ${cmdStr}`);
     } catch (e: any) {
@@ -568,7 +596,6 @@ export default function App() {
     addConsole(`[ANTISPARK-RX] ${str}`);
     const pwrMatch = str.match(/PWR=(\d+)/);
     const autoMatch = str.match(/AUTO=(\d+)/);
-    const toMatch = str.match(/TO=(\d+)/);
 
     if (pwrMatch) {
       const isPwrOn = pwrMatch[1] === '1';
@@ -581,13 +608,14 @@ export default function App() {
       setAntisparkAutoCutoff(isAutoOn);
     }
   };
+  parseAntisparkTelemetryRef.current = parseAntisparkTelemetry;
 
   const toggleAntisparkAutoCutoff = async (enabled: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setAntisparkAutoCutoff(enabled);
     antisparkAutoCutoffRef.current = enabled;
     addConsole(`[ANTISPARK] Auto-cutoff on disconnect set to: ${enabled ? 'ENABLED' : 'DISABLED'}`);
-    if (antisparkCharRef.current) {
+    if (antisparkDeviceRef.current) {
       await sendAntisparkCmd(enabled ? 'AUTO 1' : 'AUTO 0');
     }
   };
@@ -611,8 +639,7 @@ export default function App() {
     try {
       setAntisparkStatusText('Connecting to Antispark...');
       addConsole(`[ANTISPARK] Connecting to ${scannedDev.name || scannedDev.id}...`);
-      const isAlreadyConnected = await scannedDev.isConnected();
-      const connected = isAlreadyConnected ? scannedDev : await scannedDev.connect();
+      const connected = await scannedDev.connect({ timeout: 6000 });
       setAntisparkDevice(connected);
       antisparkDeviceRef.current = connected;
       setIsAntisparkConnected(true);
@@ -622,7 +649,11 @@ export default function App() {
       addConsole('[ANTISPARK] Connected! Scooter power engaged.');
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      connected.onDisconnected(() => {
+      if (antisparkDisconnectSubRef.current) {
+        try { antisparkDisconnectSubRef.current.remove(); } catch (_) {}
+        antisparkDisconnectSubRef.current = null;
+      }
+      antisparkDisconnectSubRef.current = connected.onDisconnected(() => {
         handleAntisparkDisconnected();
       });
 
@@ -641,19 +672,30 @@ export default function App() {
 
       antisparkCharRef.current = ctrlChar;
 
-      // Subscribe to notifications
-      antisparkNotifSubRef.current = ctrlChar.monitor((err, notifiedChar) => {
-        if (err) return;
-        if (notifiedChar && notifiedChar.value) {
-          const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
-          parseAntisparkTelemetry(text);
+      if (antisparkNotifSubRef.current) {
+        try { antisparkNotifSubRef.current.remove(); } catch (_) {}
+        antisparkNotifSubRef.current = null;
+      }
+
+      // Subscribe to notifications via manager-level API
+      const manager = getBleManager()!;
+      antisparkNotifSubRef.current = manager.monitorCharacteristicForDevice(
+        connected.id,
+        BLE_ANTISPARK_SVC_UUID,
+        BLE_ANTISPARK_CTRL_UUID,
+        (err, notifiedChar) => {
+          if (err) return;
+          if (notifiedChar && notifiedChar.value) {
+            const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
+            parseAntisparkTelemetryRef.current?.(text);
+          }
         }
-      });
+      );
 
       // Assert power ON command to ESP32 and query latest configuration
-      setTimeout(() => {
-        sendAntisparkCmd('STATUS');
-        sendAntisparkCmd('PWR 1');
+      setTimeout(async () => {
+        await sendAntisparkCmd('STATUS');
+        await sendAntisparkCmd('PWR 1');
       }, 300);
     } catch (e: any) {
       console.warn('Antispark connect failed:', e);
@@ -682,7 +724,9 @@ export default function App() {
       addConsole('[iBEACON] 🛑 Auto-ignition suppressed: Manual Turn OFF has priority.');
       return;
     }
-    if (isAntisparkConnectingRef.current || isAntisparkConnected) return;
+    if (isAntisparkConnectingRef.current || isAntisparkConnected || antisparkDeviceRef.current) return;
+    // Do not interrupt an active Main Scooter connection/scan with automatic Antispark scan
+    if (!isManual && isMainConnectingRef.current) return;
 
     isAntisparkConnectingRef.current = true;
     setIsAntisparkConnecting(true);
@@ -690,6 +734,10 @@ export default function App() {
     if (autoReconnectTimerRef.current) {
       clearTimeout(autoReconnectTimerRef.current);
       autoReconnectTimerRef.current = null;
+    }
+    if (antisparkScanTimerRef.current) {
+      clearTimeout(antisparkScanTimerRef.current);
+      antisparkScanTimerRef.current = null;
     }
 
     const manager = getBleManager();
@@ -706,14 +754,32 @@ export default function App() {
     }
 
     try {
+      // Attempt direct reconnection if device ID is already known BEFORE starting any scan
+      if (savedAntisparkIdRef.current) {
+        try {
+          const knownDevs = await manager.devices([savedAntisparkIdRef.current]);
+          if (knownDevs && knownDevs.length > 0) {
+            await connectAntisparkDevice(knownDevs[0]);
+            if (antisparkDeviceRef.current) return;
+          }
+        } catch (_) {}
+      }
+
       setAntisparkStatusText('Scanning for Antispark...');
       addConsole('[ANTISPARK] Scanning for Scooter-Antispark...');
-      try { manager.stopDeviceScan(); } catch (_) {}
+      if (!isMainConnectingRef.current) {
+        try { manager.stopDeviceScan(); } catch (_) {}
+      }
+
+      let foundAntispark = false;
 
       // 8-second search timeout
-      const scanTimeout = setTimeout(() => {
-        try { manager.stopDeviceScan(); } catch (_) {}
-        if (!antisparkCharRef.current && !isAntisparkConnected) {
+      antisparkScanTimerRef.current = setTimeout(() => {
+        antisparkScanTimerRef.current = null;
+        if (!isMainConnectingRef.current) {
+          try { manager.stopDeviceScan(); } catch (_) {}
+        }
+        if (!antisparkDeviceRef.current && !antisparkCharRef.current) {
           isAntisparkConnectingRef.current = false;
           setIsAntisparkConnecting(false);
           setAntisparkStatusText('Not found. Tap to retry.');
@@ -722,29 +788,20 @@ export default function App() {
         }
       }, 8000);
 
-      // Attempt direct reconnection if device ID is already known
-      if (savedAntisparkIdRef.current) {
-        try {
-          const directDev = await manager.connectToDevice(savedAntisparkIdRef.current, { autoConnect: false });
-          if (directDev) {
-            clearTimeout(scanTimeout);
-            connectAntisparkDevice(directDev);
-            return;
-          }
-        } catch (_) {}
-      }
-
       const scanServices = appStateRef.current === 'active' ? null : [BLE_ANTISPARK_SVC_UUID];
-      manager.startDeviceScan(scanServices, { allowDuplicates: true }, async (error, scannedDevice) => {
+      manager.startDeviceScan(scanServices, { allowDuplicates: false }, async (error, scannedDevice) => {
         if (error) {
-          clearTimeout(scanTimeout);
+          if (antisparkScanTimerRef.current) {
+            clearTimeout(antisparkScanTimerRef.current);
+            antisparkScanTimerRef.current = null;
+          }
           setAntisparkStatusText('Scan error: ' + error.message);
           addConsole(`[ANTISPARK] Scan error: ${error.message}`);
           isAntisparkConnectingRef.current = false;
           setIsAntisparkConnecting(false);
           return;
         }
-        if (!scannedDevice || !isAntisparkConnectingRef.current || isAntisparkConnected) return;
+        if (!scannedDevice || foundAntispark || !isAntisparkConnectingRef.current || antisparkDeviceRef.current) return;
 
         const matchesName =
           scannedDevice.name === 'Scooter-Antispark' ||
@@ -761,9 +818,13 @@ export default function App() {
           scannedDevice.id === savedAntisparkIdRef.current;
 
         if (matchesName || matchesSvc || matchesId) {
-          clearTimeout(scanTimeout);
+          foundAntispark = true;
+          if (antisparkScanTimerRef.current) {
+            clearTimeout(antisparkScanTimerRef.current);
+            antisparkScanTimerRef.current = null;
+          }
           try { manager.stopDeviceScan(); } catch (_) {}
-          connectAntisparkDevice(scannedDevice);
+          await connectAntisparkDevice(scannedDevice);
         }
       });
     } catch (e: any) {
@@ -792,24 +853,45 @@ export default function App() {
       clearTimeout(autoReconnectTimerRef.current);
       autoReconnectTimerRef.current = null;
     }
+    if (antisparkScanTimerRef.current) {
+      clearTimeout(antisparkScanTimerRef.current);
+      antisparkScanTimerRef.current = null;
+    }
     const manager = getBleManager();
-    if (manager) {
+    if (manager && !isMainConnectingRef.current) {
       try { manager.stopDeviceScan(); } catch (_) {}
     }
 
+    if (antisparkDisconnectSubRef.current) {
+      try { antisparkDisconnectSubRef.current.remove(); } catch (_) {}
+      antisparkDisconnectSubRef.current = null;
+    }
     if (antisparkNotifSubRef.current) {
-      antisparkNotifSubRef.current.remove();
+      try { antisparkNotifSubRef.current.remove(); } catch (_) {}
       antisparkNotifSubRef.current = null;
     }
-    if (antisparkDevice) {
+    const devToCancel = antisparkDeviceRef.current || antisparkDevice;
+    if (devToCancel) {
       try {
-        await antisparkDevice.cancelConnection();
+        await devToCancel.cancelConnection();
       } catch (e) {}
     }
     handleAntisparkDisconnected();
   };
 
   const handleAntisparkDisconnected = () => {
+    if (antisparkScanTimerRef.current) {
+      clearTimeout(antisparkScanTimerRef.current);
+      antisparkScanTimerRef.current = null;
+    }
+    if (antisparkDisconnectSubRef.current) {
+      try { antisparkDisconnectSubRef.current.remove(); } catch (_) {}
+      antisparkDisconnectSubRef.current = null;
+    }
+    if (antisparkNotifSubRef.current) {
+      try { antisparkNotifSubRef.current.remove(); } catch (_) {}
+      antisparkNotifSubRef.current = null;
+    }
     setIsAntisparkConnected(false);
     setAntisparkDevice(null);
     antisparkDeviceRef.current = null;
@@ -838,27 +920,30 @@ export default function App() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
 
     const manager = getBleManager();
-    if (manager) {
+    if (manager && !isMainConnectingRef.current) {
       try { manager.stopDeviceScan(); } catch (_) {}
     }
   };
 
   // Setup connected main scooter controller (services, characteristics, notifications)
-  const setupConnectedMainScooter = async (targetDevice: Device) => {
-    savedMainDeviceIdRef.current = targetDevice.id;
-    addConsole(`[BLE] Connecting to ${targetDevice.name || targetDevice.id}...`);
+  const setupConnectedMainScooter = async (targetDevice: Device): Promise<boolean> => {
+    espGearRef.current = 0;
+    cmdQueueRef.current = [];
+    isWritingRef.current = false;
+    addConsole(`[BLE] Connecting to ${targetDevice.name || targetDevice.localName || targetDevice.id}...`);
     setStatusText('Connecting to Scooter-ESP32...');
     try {
-      const isAlreadyConnected = await targetDevice.isConnected();
-      const connectedDevice = isAlreadyConnected ? targetDevice : await targetDevice.connect();
+      // Always invoke targetDevice.connect() so native BleModule registers connectedPeripherals[deviceId]
+      // and clears any stale peripheral cache before service/characteristic discovery.
+      const connectedDevice = await targetDevice.connect({ timeout: 6000 });
 
-      setDevice(connectedDevice);
-      deviceRef.current = connectedDevice;
-
-      // Negotiate higher MTU so ~90-byte telemetry packet is not truncated (especially on Android)
-      try {
-        await connectedDevice.requestMTU(512);
-      } catch (_) {}
+      // Verify this is not VESC's built-in BLE UART module which shares the Nordic UART Service UUID
+      const devName = `${connectedDevice.name || ''} ${connectedDevice.localName || ''}`;
+      if (/vesc|antispark/i.test(devName)) {
+        addConsole(`[BLE] Rejecting non-main BLE device (${devName.trim()}), continuing search for Scooter-ESP32...`);
+        try { await connectedDevice.cancelConnection(); } catch (_) {}
+        return false;
+      }
 
       // Discover services and characteristics before marking connected
       setStatusText('Discovering services...');
@@ -871,25 +956,63 @@ export default function App() {
       const char = characteristics.find((c) => c.uuid.toLowerCase() === BLE_CONSOLE_UUID.toLowerCase());
       if (!char) throw new Error('Console Characteristic not found');
 
+      // On Scooter-ESP32, 6e400002 is both NOTIFY and WRITE. On VESC BLE UART (standard NUS), 6e400002 is write-only (not notifiable).
+      if (!char.isNotifiable) {
+        addConsole(`[BLE] Rejecting device ${connectedDevice.id} (6e400002 is not notifiable - VESC BLE UART), continuing search...`);
+        try { await connectedDevice.cancelConnection(); } catch (_) {}
+        return false;
+      }
+
+      // Confirmed genuine Scooter-ESP32! Save its UUID for fast direct reconnects.
+      savedMainDeviceIdRef.current = connectedDevice.id;
+      setDevice(connectedDevice);
+      deviceRef.current = connectedDevice;
+
+      // Negotiate higher MTU so ~90-byte telemetry packet is not truncated (especially on Android)
+      try {
+        await connectedDevice.requestMTU(512);
+      } catch (_) {}
+
+      // Keep charRef for backwards-compat, while writes/monitors use manager-level UUID API
       charRef.current = char;
 
-      // Clean up any lingering subscription before starting a new one
+      // Clean up any lingering notification subscription before starting a new one
       if (notifSubRef.current) {
         try { notifSubRef.current.remove(); } catch (_) {}
         notifSubRef.current = null;
       }
 
-      // Subscribe to live notifications
-      notifSubRef.current = char.monitor((err, notifiedChar) => {
-        if (err) {
-          console.warn('Notification error:', err);
-          addConsole(`[NOTIF-ERR] ${err.message}`);
-          return;
+      // Subscribe via manager-level API so we never hold a stale characteristic object.
+      // Route through parseTelemetryRef so the callback always calls the latest closure.
+      const manager = getBleManager()!;
+      notifSubRef.current = manager.monitorCharacteristicForDevice(
+        connectedDevice.id,
+        BLE_SVC_UUID,
+        BLE_CONSOLE_UUID,
+        (err, notifiedChar) => {
+          if (err) {
+            // Code 205 = BLE operation cancelled (normal on disconnect) – suppress noise
+            if ((err as any).errorCode !== 205) {
+              console.warn('Notification error:', err);
+              addConsole(`[NOTIF-ERR] ${err.message}`);
+            }
+            return;
+          }
+          if (notifiedChar && notifiedChar.value) {
+            const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
+            // Always use the latest parseTelemetry (via ref) to avoid stale closure
+            parseTelemetryRef.current?.(text);
+          }
         }
-        if (notifiedChar && notifiedChar.value) {
-          const text = Buffer.from(notifiedChar.value, 'base64').toString('ascii');
-          parseTelemetry(text);
-        }
+      );
+
+      // Clean up any old disconnect listener before registering a new one
+      if (disconnectSubRef.current) {
+        try { disconnectSubRef.current.remove(); } catch (_) {}
+        disconnectSubRef.current = null;
+      }
+      disconnectSubRef.current = connectedDevice.onDisconnected(() => {
+        handleDisconnected();
       });
 
       // Mark connected only once characteristic is confirmed and monitored
@@ -899,32 +1022,43 @@ export default function App() {
       activateKeepAwakeAsync();
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
 
-      // Setup disconnect listener
-      connectedDevice.onDisconnected(() => {
-        handleDisconnected();
-      });
-
-      // Sequential initial handshake: sync unlock profile, then request initial status ('S')
-      setTimeout(async () => {
+      // Request initial status ('S') once CCCD subscription settles
+      if (handshakeTimerRef.current) {
+        clearTimeout(handshakeTimerRef.current);
+        handshakeTimerRef.current = null;
+      }
+      handshakeTimerRef.current = setTimeout(async () => {
+        handshakeTimerRef.current = null;
+        if (!deviceRef.current) return;
         try {
-          await sendCmd(unlockEnabled ? 'UL 1' : 'UL 0');
-          await new Promise((r) => setTimeout(r, 150));
           await sendCmd('S');
         } catch (e) {
           console.warn('Initial telemetry sync failed:', e);
         }
+        setTimeout(() => {
+          if (deviceRef.current && espGearRef.current === 0) {
+            sendCmd('S');
+          }
+        }, 650);
       }, 250);
+      return true;
     } catch (e: any) {
       console.warn('Main scooter connection failed:', e);
+      addConsole(`[BLE-ERR] Connect failed: ${e.message}`);
       setStatusText('Connect failed: ' + e.message);
       setIsConnected(false);
       setDevice(null);
       deviceRef.current = null;
       charRef.current = null;
+      if (disconnectSubRef.current) {
+        try { disconnectSubRef.current.remove(); } catch (_) {}
+        disconnectSubRef.current = null;
+      }
       if (notifSubRef.current) {
         try { notifSubRef.current.remove(); } catch (_) {}
         notifSubRef.current = null;
       }
+      return false;
     } finally {
       setIsMainConnecting(false);
       isMainConnectingRef.current = false;
@@ -933,7 +1067,7 @@ export default function App() {
 
   // Connect BLE (Main Scooter Controller: Scooter-ESP32)
   const connectBle = async () => {
-    if (isMainConnectingRef.current || isConnected) return;
+    if (isMainConnectingRef.current || isConnected || deviceRef.current) return;
 
     const manager = getBleManager();
     if (!manager) {
@@ -982,26 +1116,62 @@ export default function App() {
         return;
       }
 
+      // Stop any existing scans and cancel pending scan timers to avoid collision
+      if (antisparkScanTimerRef.current) {
+        clearTimeout(antisparkScanTimerRef.current);
+        antisparkScanTimerRef.current = null;
+      }
+      if (mainScanTimerRef.current) {
+        clearTimeout(mainScanTimerRef.current);
+        mainScanTimerRef.current = null;
+      }
+      try { manager.stopDeviceScan(); } catch (_) {}
+
+      // Fast direct reconnect if verified Scooter-ESP32 peripheral UUID is already known in this session
+      if (savedMainDeviceIdRef.current) {
+        try {
+          addConsole(`[BLE] Fast-reconnecting to verified Scooter-ESP32 (${savedMainDeviceIdRef.current})...`);
+          setStatusText('Reconnecting to Scooter-ESP32...');
+          const knownDevs = await manager.devices([savedMainDeviceIdRef.current]);
+          if (knownDevs && knownDevs.length > 0) {
+            setIsScanning(false);
+            const ok = await setupConnectedMainScooter(knownDevs[0]);
+            if (ok && deviceRef.current) return;
+          }
+        } catch (e: any) {
+          addConsole(`[BLE] Fast-reconnect fallback to scan: ${e?.message || e}`);
+        }
+        // Re-assert connecting state if fast reconnect fell back to scan
+        isMainConnectingRef.current = true;
+        setIsMainConnecting(true);
+        setIsScanning(true);
+      }
+
       setStatusText('Scanning for Scooter-ESP32...');
       addConsole('[BLE] Scanning for Scooter-ESP32...');
 
-      // Stop any existing scans to avoid collision
-      try { manager.stopDeviceScan(); } catch (_) {}
+      let foundMainInScan = false;
+      const seenScanIds = new Set<string>();
 
       // Stop scan after 10s if completed or timeout
-      const scanTimer = setTimeout(() => {
+      mainScanTimerRef.current = setTimeout(() => {
+        mainScanTimerRef.current = null;
         try { manager.stopDeviceScan(); } catch (_) {}
         setIsScanning(false);
-        setIsMainConnecting(false);
-        isMainConnectingRef.current = false;
-        if (!charRef.current && !isConnected) {
+        if (!foundMainInScan && !charRef.current && !deviceRef.current) {
+          setIsMainConnecting(false);
+          isMainConnectingRef.current = false;
           setStatusText('Scooter not found. Tap to retry.');
+          addConsole('[BLE] Scan timed out: Scooter-ESP32 not found');
         }
       }, 10000);
 
-      manager.startDeviceScan(null, null, async (error, scannedDevice) => {
+      manager.startDeviceScan(null, { allowDuplicates: true }, async (error, scannedDevice) => {
         if (error) {
-          clearTimeout(scanTimer);
+          if (mainScanTimerRef.current) {
+            clearTimeout(mainScanTimerRef.current);
+            mainScanTimerRef.current = null;
+          }
           console.warn('Scan error:', error);
           setStatusText('Scan error: ' + error.message);
           setIsScanning(false);
@@ -1010,40 +1180,45 @@ export default function App() {
           return;
         }
 
-        // 1. Check for Scooter-ESP32 (Main controller)
-        if (
-          scannedDevice &&
-          (scannedDevice.name === 'Scooter-ESP32' ||
-            scannedDevice.localName === 'Scooter-ESP32' ||
-            (scannedDevice.serviceUUIDs &&
-              scannedDevice.serviceUUIDs.some((u) => u.toLowerCase() === BLE_SVC_UUID.toLowerCase())))
-        ) {
-          if (charRef.current || isConnected) return;
+        if (!scannedDevice) return;
+        const dName = scannedDevice.name || '';
+        const lName = scannedDevice.localName || '';
+        const combinedName = `${dName} ${lName}`.trim();
+
+        // Log each newly discovered named/service BLE device once per scan for diagnostics
+        if (combinedName && !seenScanIds.has(`${scannedDevice.id}:${combinedName}`)) {
+          seenScanIds.add(`${scannedDevice.id}:${combinedName}`);
+          addConsole(`[SCAN] Saw ${combinedName} (${scannedDevice.id})`);
+        }
+
+        // Explicitly ignore VESC BLE UART and Scooter-Antispark (VESC BLE UART shares Nordic UART Service UUID!)
+        if (/vesc|antispark/i.test(combinedName)) {
+          return;
+        }
+        if (savedAntisparkIdRef.current && scannedDevice.id === savedAntisparkIdRef.current) {
+          return;
+        }
+
+        // Match ONLY Scooter-ESP32 by exact name or previously verified Scooter-ESP32 UUID
+        const isScooterEsp32 =
+          dName === 'Scooter-ESP32' ||
+          lName === 'Scooter-ESP32' ||
+          (savedMainDeviceIdRef.current !== null && scannedDevice.id === savedMainDeviceIdRef.current);
+
+        if (isScooterEsp32) {
+          if (foundMainInScan || charRef.current || deviceRef.current || isConnected) return;
+          foundMainInScan = true;
 
           // CRITICAL: Stop scan immediately before initiating connection.
-          // In iOS CoreBluetooth, continuing to scan while calling connect causes duplicate
-          // advertisement callbacks and radio preemption, resulting in "Operation was cancelled".
-          clearTimeout(scanTimer);
+          if (mainScanTimerRef.current) {
+            clearTimeout(mainScanTimerRef.current);
+            mainScanTimerRef.current = null;
+          }
           try { manager.stopDeviceScan(); } catch (_) {}
           setIsScanning(false);
 
           await setupConnectedMainScooter(scannedDevice);
           return;
-        }
-
-        // 2. Secondary check: Scooter-Antispark (if antispark is not already connected or connecting)
-        if (
-          scannedDevice &&
-          (scannedDevice.name === 'Scooter-Antispark' ||
-            scannedDevice.localName === 'Scooter-Antispark' ||
-            (savedAntisparkIdRef.current !== null && scannedDevice.id === savedAntisparkIdRef.current) ||
-            (scannedDevice.serviceUUIDs &&
-              scannedDevice.serviceUUIDs.some((u) => u.toLowerCase() === BLE_ANTISPARK_SVC_UUID.toLowerCase()))) &&
-          !antisparkCharRef.current &&
-          !isAntisparkConnectingRef.current &&
-          !isMainConnectingRef.current
-        ) {
-          connectAntisparkDevice(scannedDevice);
         }
       });
     } catch (e: any) {
@@ -1060,9 +1235,17 @@ export default function App() {
       clearInterval(demoIntervalRef.current);
       demoIntervalRef.current = null;
     }
+    if (handshakeTimerRef.current) {
+      clearTimeout(handshakeTimerRef.current);
+      handshakeTimerRef.current = null;
+    }
     setIsDemoMode(false);
+    if (disconnectSubRef.current) {
+      try { disconnectSubRef.current.remove(); } catch (_) {}
+      disconnectSubRef.current = null;
+    }
     if (notifSubRef.current) {
-      notifSubRef.current.remove();
+      try { notifSubRef.current.remove(); } catch (_) {}
       notifSubRef.current = null;
     }
     const devToCancel = deviceRef.current || device;
@@ -1070,15 +1253,29 @@ export default function App() {
       try {
         await devToCancel.cancelConnection();
       } catch (e) {}
+      await new Promise((r) => setTimeout(r, 150));
     }
     handleDisconnected();
   };
 
   const handleDisconnected = () => {
+    if (handshakeTimerRef.current) {
+      clearTimeout(handshakeTimerRef.current);
+      handshakeTimerRef.current = null;
+    }
+    if (disconnectSubRef.current) {
+      try { disconnectSubRef.current.remove(); } catch (_) {}
+      disconnectSubRef.current = null;
+    }
     if (notifSubRef.current) {
       try { notifSubRef.current.remove(); } catch (_) {}
       notifSubRef.current = null;
     }
+    // Clear write queue and lock so stale state doesn't block re-connect
+    cmdQueueRef.current = [];
+    isWritingRef.current = false;
+    espGearRef.current = 0;
+    setUnlockEnabled(false);
     setIsConnected(false);
     setDevice(null);
     deviceRef.current = null;
@@ -1197,12 +1394,71 @@ export default function App() {
     if (gearMatch) {
       let g = parseInt(gearMatch[1], 10);
       if (g >= 1 && g <= 3) {
+        espGearRef.current = g;
         setActiveGear(g);
       }
     }
   };
 
-  // Outgoing BLE commands
+  // Always keep parseTelemetryRef pointing to the freshest version of parseTelemetry so the
+  // BLE monitor callback (which is set up once on connect) never uses a stale closure.
+  parseTelemetryRef.current = parseTelemetry;
+
+  // Internal: drain the command queue one-at-a-time using the manager-level UUID API
+  // (avoids stale Characteristic object references that cause silent failures on iOS)
+  const drainCmdQueue = async () => {
+    if (isWritingRef.current) return; // already running a drain loop
+    isWritingRef.current = true;
+    try {
+      while (cmdQueueRef.current.length > 0) {
+        const cmd = cmdQueueRef.current.shift()!;
+        const mgr = getBleManager();
+        const devId = deviceRef.current?.id ?? savedMainDeviceIdRef.current;
+        if (!mgr || !devId || !deviceRef.current) break; // no connection, stop draining
+        const base64Data = Buffer.from(cmd, 'utf-8').toString('base64');
+        const txId = `tx_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        try {
+          await Promise.race([
+            mgr.writeCharacteristicWithResponseForDevice(
+              devId,
+              BLE_SVC_UUID,
+              BLE_CONSOLE_UUID,
+              base64Data,
+              txId
+            ),
+            new Promise((_, reject) =>
+              setTimeout(() => {
+                try { mgr.cancelTransaction(txId); } catch (_) {}
+                reject(new Error('WriteWithResponse timeout'));
+              }, 1200)
+            ),
+          ]);
+          addConsole(`[TX] ${cmd}`);
+          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        } catch (e: any) {
+          // Fallback to writeWithoutResponse if ATT Write Request timed out or collided
+          try {
+            await mgr.writeCharacteristicWithoutResponseForDevice(
+              devId,
+              BLE_SVC_UUID,
+              BLE_CONSOLE_UUID,
+              base64Data
+            );
+            addConsole(`[TX-NR] ${cmd}`);
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+          } catch (e2: any) {
+            console.warn('Write error:', e2);
+            addConsole(`[ERR] ${e2.message || e.message}`);
+            break;
+          }
+        }
+      }
+    } finally {
+      isWritingRef.current = false;
+    }
+  };
+
+  // Outgoing BLE commands – queues instead of dropping when a write is in flight
   const sendCmd = async (cmdStr: string) => {
     if (isDemoMode) {
       addConsole(`[SIM-TX] ${cmdStr}`);
@@ -1248,22 +1504,13 @@ export default function App() {
       }
       return;
     }
-    if (!charRef.current) return;
-    if (isWritingRef.current) return;
-    isWritingRef.current = true;
-
-    try {
-      const base64Data = Buffer.from(cmdStr, 'utf-8').toString('base64');
-      await charRef.current.writeWithResponse(base64Data);
-      addConsole(`[TX] ${cmdStr}`);
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    } catch (e: any) {
-      console.warn('Write error:', e);
-      addConsole(`[ERR] ${e.message}`);
-    } finally {
-      isWritingRef.current = false;
-    }
+    // Real BLE: push to queue, then drain (no-op if already draining)
+    const devId = deviceRef.current?.id ?? savedMainDeviceIdRef.current;
+    if (!devId) return;
+    cmdQueueRef.current.push(cmdStr);
+    drainCmdQueue();
   };
+
 
   const toggleDualMode = (desiredState?: boolean) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -1339,6 +1586,82 @@ export default function App() {
     setActiveGear(gear);
     sendCmd(`P ${gear}`);
   };
+
+  // Automated 5x hardware verification loop when launched with --autotest5x
+  useEffect(() => {
+    if (!ScooterBeacon.isAutoTest5xRequested()) return;
+    let cancelled = false;
+    const waitCond = async (pred: () => boolean, timeoutMs: number): Promise<boolean> => {
+      const start = Date.now();
+      while (!cancelled && Date.now() - start < timeoutMs) {
+        if (pred()) return true;
+        await new Promise((r) => setTimeout(r, 100));
+      }
+      return pred();
+    };
+
+    const run5xTest = async () => {
+      await new Promise((r) => setTimeout(r, 1000));
+      addConsole('[AUTOTEST-5X] 🚀 Starting 5-in-a-row Connect -> Change Gear -> Disconnect test on iPhone...');
+      if (!antisparkDeviceRef.current && !isAntisparkConnectingRef.current) {
+        scanAndConnectAntispark(true);
+      }
+      await waitCond(() => antisparkDeviceRef.current !== null && !isAntisparkConnectingRef.current, 4500);
+      await new Promise((r) => setTimeout(r, 2000));
+      addConsole(`[AUTOTEST-5X] Dual-BLE status: Antispark connected=${antisparkDeviceRef.current !== null}`);
+
+      for (let cycle = 1; cycle <= 5; cycle++) {
+        if (cancelled) return;
+        addConsole(`[AUTOTEST-5X] === CYCLE ${cycle}/5: Connecting to Scooter-ESP32 (Antispark=${antisparkDeviceRef.current !== null}) ===`);
+        await connectBle();
+
+        const connectedAndTelemetry = await waitCond(
+          () => deviceRef.current !== null && espGearRef.current >= 1,
+          12000
+        );
+        if (!connectedAndTelemetry) {
+          addConsole(`[AUTOTEST-5X] ❌ CYCLE ${cycle}/5 FAILED: Did not receive initial telemetry after connect`);
+          return;
+        }
+
+        const startGear = espGearRef.current;
+        const targetGear = startGear === 1 ? 2 : startGear === 2 ? 3 : 1;
+        addConsole(
+          `[AUTOTEST-5X] Cycle ${cycle}/5: Connected (ESP32 G=${startGear}). Changing gear in app -> G=${targetGear}...`
+        );
+
+        selectProfile(targetGear);
+
+        const gearChanged = await waitCond(() => espGearRef.current === targetGear, 5000);
+        if (!gearChanged) {
+          addConsole(
+            `[AUTOTEST-5X] ❌ CYCLE ${cycle}/5 FAILED: ESP32 gear stayed G=${espGearRef.current}, expected G=${targetGear}`
+          );
+          return;
+        }
+
+        addConsole(
+          `[AUTOTEST-5X] Cycle ${cycle}/5: Verified ESP32 gear changed ${startGear} -> ${espGearRef.current}! Disconnecting...`
+        );
+        await disconnect();
+
+        const disconnectedOk = await waitCond(() => deviceRef.current === null, 5000);
+        if (!disconnectedOk) {
+          addConsole(`[AUTOTEST-5X] ❌ CYCLE ${cycle}/5 FAILED: Device did not disconnect cleanly`);
+          return;
+        }
+
+        addConsole(`[AUTOTEST-5X] ✅ CYCLE ${cycle}/5 PASSED!`);
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+      addConsole('[AUTOTEST-5X] 🎉 ALL 5/5 CYCLES PASSED IN A ROW!');
+    };
+
+    run5xTest();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Arc math: 180° semi-circle from (10, 50) to (90, 50), r=40
   // Arc length = π * 40 ≈ 125.66

@@ -224,6 +224,15 @@ public class ScooterBeaconModule: Module {
       return UserDefaults.standard.bool(forKey: "scooter_manual_override_off")
     }
 
+    Function("isAutoTest5xRequested") { () -> Bool in
+      return CommandLine.arguments.contains("--autotest5x") ||
+             ProcessInfo.processInfo.environment["SCOOTER_AUTOTEST_5X"] == "1"
+    }
+
+    Function("nativeLog") { (msg: String) in
+      NSLog("[ScooterApp] %@", msg)
+    }
+
     Function("startMonitoring") { (uuidStr: String, major: Int, minor: Int) in
       DispatchQueue.main.async {
         if UserDefaults.standard.bool(forKey: "scooter_manual_override_off") {

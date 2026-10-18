@@ -65,6 +65,12 @@ export const ScooterBeacon = {
   isManualOverrideOff: (): boolean => {
     return nativeModule?.isManualOverrideOff() ?? false;
   },
+  isAutoTest5xRequested: (): boolean => {
+    return nativeModule?.isAutoTest5xRequested?.() ?? false;
+  },
+  nativeLog: (msg: string) => {
+    nativeModule?.nativeLog?.(msg);
+  },
   addEnterListener: (listener: (event: BeaconRegionEvent) => void): EventSubscription | null => {
     return emitter?.addListener('onBeaconEnter', listener) ?? null;
   },

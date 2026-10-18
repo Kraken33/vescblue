@@ -44,7 +44,8 @@
           "modes": ["peripheral", "central"],
           "bluetoothAlwaysPermission": "Allow Scooter BLE to connect and sync live telemetry with your electric scooter."
         }
-      ]
+      ],
+      "./plugins/withBleFixes.js"
     ]
   }
 }
