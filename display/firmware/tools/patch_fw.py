@@ -21,7 +21,10 @@ import subprocess
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-STOCK = os.path.join(os.path.dirname(ROOT), "display_docs", "FMD FT32F030C8AT7_fullDump.bin.pdf")
+_stock_candidate = os.path.join(os.path.dirname(ROOT), "docs", "FMD FT32F030C8AT7_fullDump.bin.pdf")
+if not os.path.exists(_stock_candidate):
+    _stock_candidate = os.path.join(os.path.dirname(ROOT), "display_docs", "FMD FT32F030C8AT7_fullDump.bin.pdf")
+STOCK = _stock_candidate
 FLASH_BASE = 0x08000000
 SIZE = 0x10000
 CODE_END = 0xF800  # 0xF800..0xFFFF = per-device settings / NVRAM

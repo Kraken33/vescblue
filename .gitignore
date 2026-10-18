@@ -1,5 +1,25 @@
+# Build artifacts
 build/
+*.bin
+*.elf
+*.hex
+*.o
+*.a
+*.d
+
+# Compiled test binaries
+test_speed_governor
+test_protocol
+
+# OS / Editor artifacts
 .DS_Store
+*.swp
+*~
+
+# Python cache
 __pycache__/
 *.pyc
+
+# Display firmware backups
+display/firmware/backups/
 display_firmware/backups/

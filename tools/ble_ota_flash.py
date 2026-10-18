@@ -118,6 +118,14 @@ async def flash_firmware(bin_path):
         return True
 
 if __name__ == "__main__":
-    bin_file = sys.argv[1] if len(sys.argv) > 1 else "build/vescblue.ino.bin"
+    if len(sys.argv) > 1:
+        bin_file = sys.argv[1]
+    else:
+        candidates = [
+            "build/vescblue.ino.bin",
+            os.path.join(os.path.dirname(__file__), "..", "build", "vescblue.ino.bin"),
+            os.path.join(os.path.dirname(__file__), "build", "vescblue.ino.bin"),
+        ]
+        bin_file = next((c for c in candidates if os.path.exists(c)), "build/vescblue.ino.bin")
     success = asyncio.run(flash_firmware(bin_file))
     sys.exit(0 if success else 1)
