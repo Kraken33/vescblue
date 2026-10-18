@@ -79,6 +79,13 @@ const DriveProfile PROFILE_S3 = PROFILE_3_UNLOCKED;
 
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f; // Strong default brake current in Amps
+float parkBrakeAmps = 35.0f; // Configurable park lock strength in Amps (5..120A)
+float parkErpmThreshold = 100.0f; // Configurable ERPM threshold to engage park brake (20..1000 ERPM)
+
+// Active Park Mode & Anti-Theft Motor Lock State
+bool parkMotionDetected = false;
+int32_t vescTachometer = 0;
+float testErpm = 0.0f;
 
 // e-ABS (Anti-lock Braking System - Dualtron style pulsation)
 bool absEnabled = false;                    // Master toggle for e-ABS (persisted in prefs)
@@ -402,6 +409,56 @@ void sendDualBrakeCurrent(float masterBrakeAmps, float slaveBrakeAmps) {
   }
 }
 
+// Fast non-blocking Handbrake command sender (COMM_SET_HANDBRAKE = 10)
+// Injects open-loop holding vector in FOC mode to clamp rotor at standstill
+void sendDualHandbrakeCurrent(float masterAmps, float slaveAmps) {
+  int32_t masterMilliAmps = (int32_t)(masterAmps * 1000.0f);
+  uint8_t mPayload[5];
+  mPayload[0] = 10; // COMM_SET_HANDBRAKE
+  mPayload[1] = (uint8_t)((masterMilliAmps >> 24) & 0xFF);
+  mPayload[2] = (uint8_t)((masterMilliAmps >> 16) & 0xFF);
+  mPayload[3] = (uint8_t)((masterMilliAmps >> 8) & 0xFF);
+  mPayload[4] = (uint8_t)(masterMilliAmps & 0xFF);
+  uint16_t mCrc = crc16_vesc(mPayload, 5);
+  uint8_t mFrame[10] = {0x02,
+                        5,
+                        mPayload[0],
+                        mPayload[1],
+                        mPayload[2],
+                        mPayload[3],
+                        mPayload[4],
+                        (uint8_t)(mCrc >> 8),
+                        (uint8_t)(mCrc & 0xFF),
+                        0x03};
+  VescSerial.write(mFrame, 10);
+
+  if (slaveCanId > 0 && dualMotorEnabled) {
+    int32_t slaveMilliAmps = (int32_t)(slaveAmps * 1000.0f);
+    uint8_t sPayload[7];
+    sPayload[0] = 34; // COMM_FORWARD_CAN
+    sPayload[1] = slaveCanId;
+    sPayload[2] = 10; // COMM_SET_HANDBRAKE
+    sPayload[3] = (uint8_t)((slaveMilliAmps >> 24) & 0xFF);
+    sPayload[4] = (uint8_t)((slaveMilliAmps >> 16) & 0xFF);
+    sPayload[5] = (uint8_t)((slaveMilliAmps >> 8) & 0xFF);
+    sPayload[6] = (uint8_t)(slaveMilliAmps & 0xFF);
+    uint16_t sCrc = crc16_vesc(sPayload, 7);
+    uint8_t sFrame[12] = {0x02,
+                          7,
+                          sPayload[0],
+                          sPayload[1],
+                          sPayload[2],
+                          sPayload[3],
+                          sPayload[4],
+                          sPayload[5],
+                          sPayload[6],
+                          (uint8_t)(sCrc >> 8),
+                          (uint8_t)(sCrc & 0xFF),
+                          0x03};
+    VescSerial.write(sFrame, 12);
+  }
+}
+
 // Non-blocking telemetry request (fires in < 20 microseconds)
 void requestVescTelemetryAsync() {
   uint8_t payload = 4; // COMM_GET_VALUES
@@ -452,6 +509,15 @@ void processVescIncoming() {
             vehicleSpeedKmH = fabs(vescRpm57) * ERPM_TO_KMH;
             kickBlocked =
                 (KICK_RPM_ERPM > 0.0f) && (fabs(vescRpm57) < KICK_RPM_ERPM);
+
+            if (payloadLen >= 49) {
+              // Unpack Tachometer (bytes 45-48 in COMM_GET_VALUES payload, at 2 + 45 = 47)
+              int32_t tach = ((int32_t)vescRxBuf[47] << 24) |
+                             ((int32_t)vescRxBuf[48] << 16) |
+                             ((int32_t)vescRxBuf[49] << 8) |
+                             ((int32_t)vescRxBuf[50]);
+              vescTachometer = tach;
+            }
           }
         }
         vescRxIdx = 0;
@@ -510,6 +576,9 @@ void setGear(int newGear, bool syncToDisplay = true) {
   currentGear = constrain(newGear, 0, 3);
   if (currentGear >= 1 && currentGear <= 3) {
     lastNonParkGear = currentGear;
+  }
+  if (currentGear == 0) {
+    parkMotionDetected = false;
   }
 
   if (syncToDisplay) {
@@ -751,17 +820,18 @@ void blePushLine(const String &line) {
 
 void bleHandleCommand(const String &cmd) {
   if (cmd == "S") {
-    char buf[340];
+    char buf[360];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
             : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "G4"
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(buf, sizeof(buf),
-             "SPD=%.1f G=%d PARK=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
+             "SPD=%.1f G=%d PARK=%d PL=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
              "LIM=%.0fkm/h KICK=%s(%.0f) UL=%d GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
-             "BC=%.1fA ABS=%d AF=%d ABSS=%d CAN=%d",
+             "BC=%.1fA PA=%.1fA PE=%.0f ABS=%d AF=%d ABSS=%d CAN=%d",
              vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
+             (currentGear == 0 && parkMotionDetected) ? 1 : 0,
              profileSSwitch ? 1 : 0, currentVoltageReading, currentRawThrottle,
              debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
              (currentGear == 0) ? "Park" : activeProfile.name,
@@ -770,7 +840,7 @@ void bleHandleCommand(const String &cmd) {
              (unlockEnabled && bleClientConnected) ? 1 : 0,
              (unlockEnabled && bleClientConnected) ? 1 : 0, ccStatus,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH",
-             userBrakeAmps, absEnabled ? 1 : 0, absFrequencyHz,
+             userBrakeAmps, parkBrakeAmps, parkErpmThreshold, absEnabled ? 1 : 0, absFrequencyHz,
              absStrobeEnabled ? 1 : 0, slaveCanId);
     blePushLine(String(buf));
   } else if (cmd == "UL" || cmd == "UNLOCK" || cmd == "GS" || cmd == "GSHIFT") {
@@ -859,6 +929,29 @@ void bleHandleCommand(const String &cmd) {
       setGear(0);
     } else {
       setGear(lastNonParkGear >= 1 ? lastNonParkGear : 1);
+    }
+  } else if (cmd == "PA") {
+    blePushLine("PARK BRAKE AMPS: " + String(parkBrakeAmps, 1) + " A");
+  } else if (cmd.startsWith("PA ")) {
+    float a = cmd.substring(3).toFloat();
+    if (a >= 5.0f && a <= 120.0f) {
+      parkBrakeAmps = a;
+      prefs.putFloat("park_amps", parkBrakeAmps);
+      blePushLine("PARK BRAKE AMPS set to " + String(parkBrakeAmps, 1) + " A");
+    } else {
+      blePushLine("ERR park amps 5..120 A");
+    }
+  } else if (cmd == "PE" || cmd == "PERPM") {
+    blePushLine("PARK ERPM: " + String(parkErpmThreshold, 0) + " (approx " + String(parkErpmThreshold * ERPM_TO_KMH, 2) + " km/h)");
+  } else if (cmd.startsWith("PE ") || cmd.startsWith("PERPM ")) {
+    int spaceIdx = cmd.indexOf(' ');
+    float e = cmd.substring(spaceIdx + 1).toFloat();
+    if (e >= 20.0f && e <= 1000.0f) {
+      parkErpmThreshold = e;
+      prefs.putFloat("park_erpm", parkErpmThreshold);
+      blePushLine("PARK ERPM set to " + String(parkErpmThreshold, 0) + " (approx " + String(parkErpmThreshold * ERPM_TO_KMH, 2) + " km/h)");
+    } else {
+      blePushLine("ERR park ERPM range 20..1000");
     }
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
@@ -980,16 +1073,28 @@ void bleHandleCommand(const String &cmd) {
     }
   } else if (cmd == "T") {
     testModeActive = false;
+    testErpm = 0.0f;
     blePushLine("TEST off");
   } else if (cmd.startsWith("T ")) {
     float v = 1.0;
     int b = 0;
-    sscanf(cmd.c_str() + 2, "%f %d", &v, &b);
+    float erpm = 0.0f;
+    int matched = sscanf(cmd.c_str() + 2, "%f %d %f", &v, &b, &erpm);
     testModeActive = true;
     testVoltage = constrain(v, 0.5, 3.3);
     testBrakeState = (b != 0);
+    if (matched >= 3) {
+      testErpm = erpm;
+    } else {
+      testErpm = 0.0f;
+    }
     blePushLine("TEST on V=" + String(testVoltage, 2) +
-                " B=" + String(testBrakeState ? 1 : 0));
+                " B=" + String(testBrakeState ? 1 : 0) +
+                " ERPM=" + String(testErpm, 0));
+  } else if (cmd.startsWith("TE ")) {
+    testModeActive = true;
+    testErpm = cmd.substring(3).toFloat();
+    blePushLine("TEST ERPM set to " + String(testErpm, 0));
   } else if (cmd.startsWith("K ")) {
     float k = cmd.substring(2).toFloat();
     if (k >= 0 && k < 5000) {
@@ -1026,11 +1131,11 @@ void bleHandleCommand(const String &cmd) {
     ESP.restart();
   } else if (cmd == "?") {
     blePushLine(
-        "S status | P [1-4] prof | G [1-4] gear | GS [0/1] shift | CC [0/1] "
-        "cruise | BEN [0/1] brake-en | BC [amps] brake | ABS [0/1] e-abs | "
-        "AF [2-20] abs-freq | ABSS [0/1] abs-strobe | L [0/1] light | TL "
-        "turnL | TR turnR | HAZ haz | DUAL [0/1] dual | CAN [id] | T [v b] test | K kick | "
-        "R reboot");
+        "S status | P [0-3] prof | G [0-3] gear | PARK [0/1] park | PA [amps] park-amps | "
+        "GS [0/1] shift | CC [0/1] cruise | BEN [0/1] brake-en | BC [amps] brake | "
+        "ABS [0/1] e-abs | AF [2-20] abs-freq | ABSS [0/1] abs-strobe | L [0/1] light | "
+        "TL turnL | TR turnR | HAZ haz | DUAL [0/1] dual | CAN [id] | T [v b e] test | "
+        "TE [erpm] | K kick | R reboot");
   } else {
     blePushLine("ERR unknown, send ?");
   }
@@ -1153,6 +1258,16 @@ void setup() {
   brakeEnabled = prefs.getBool("brake_en", true);    // Default Enabled
   userBrakeAmps =
       prefs.getFloat("brake_amps", 25.0f);      // Default 25A strong e-brake
+  parkBrakeAmps =
+      prefs.getFloat("park_amps", 35.0f);       // Default 35A park lock
+  if (parkBrakeAmps < 5.0f || parkBrakeAmps > 120.0f) {
+    parkBrakeAmps = 35.0f;
+  }
+  parkErpmThreshold =
+      prefs.getFloat("park_erpm", 100.0f);     // Default 100 ERPM threshold (approx 0.3 km/h)
+  if (parkErpmThreshold < 20.0f || parkErpmThreshold > 1000.0f) {
+    parkErpmThreshold = 100.0f;
+  }
   absEnabled = prefs.getBool("abs_en", false);  // Default e-ABS disabled
   absStrobeEnabled = prefs.getBool("abs_strobe", true); // Default strobe rear light
   absFrequencyHz = prefs.getInt("abs_freq", 10);// Default 10 Hz
@@ -1189,8 +1304,9 @@ void loop() {
   // 1. Process Incoming VESC Telemetry Bytes (Non-blocking, < 20 microseconds)
   processVescIncoming();
 
-  // 2. Poll VESC Telemetry asynchronously every 100ms
-  if (now - lastVescPoll > 100) {
+  // 2. Poll VESC Telemetry asynchronously (30ms in Park for instant motion sensing, 50ms otherwise)
+  unsigned long vescPollInterval = (currentGear == 0) ? 30 : 50;
+  if (now - lastVescPoll >= vescPollInterval) {
     lastVescPoll = now;
     requestVescTelemetryAsync();
   }
@@ -1199,6 +1315,11 @@ void loop() {
   if (testModeActive) {
     debouncedBrakeState = testBrakeState && brakeEnabled;
     currentRawThrottle = (int)((testVoltage / 3.3f) * 4095.0f);
+    if (testErpm != 0.0f) {
+      vescRpm57 = testErpm;
+      vehicleSpeedMps = fabs(vescRpm57) * ERPM_TO_MPS;
+      vehicleSpeedKmH = fabs(vescRpm57) * ERPM_TO_KMH;
+    }
   } else {
     if (!brakeEnabled) {
       debouncedBrakeState = false;
@@ -1283,15 +1404,19 @@ void loop() {
   }
 
   // 5b. Update Lights Controller (Inputs, Debouncing, Blinkers & Brake Light / Strobe)
-  bool strobeActive = debouncedBrakeState && inAbsPulsation && absStrobeEnabled;
-  lights.update(debouncedBrakeState, strobeActive, absBrakePulseActive);
+  bool parkAlarmActive = (currentGear == 0 && parkMotionDetected);
+  bool strobeActive = (debouncedBrakeState && inAbsPulsation && absStrobeEnabled) || parkAlarmActive;
+  lights.update(debouncedBrakeState || parkAlarmActive, strobeActive, absBrakePulseActive || parkAlarmActive);
   if (lights.isFrontLightOn() != displayLightState) {
     displayLightState = lights.isFrontLightOn();
   }
 
   // 6. INSTANT ZERO-LATENCY Throttle Calculation
   float rawRatio = 0.0f;
-  if (currentRawThrottle > THROTTLE_MIN_RAW) {
+  if (currentGear == 0) {
+    // In Park mode (Gear 0), throttle is completely locked out
+    rawRatio = 0.0f;
+  } else if (currentRawThrottle > THROTTLE_MIN_RAW) {
     rawRatio = (currentRawThrottle - THROTTLE_MIN_RAW) /
                (float)(THROTTLE_MAX_RAW - THROTTLE_MIN_RAW);
     rawRatio = constrain(rawRatio, 0.0f, 1.0f);
@@ -1365,6 +1490,37 @@ void loop() {
         targetBrakeAmps = 0.0f;
         sendDualCurrent(0.0f, 0.0f);
       }
+    } else if (currentGear == 0) {
+      // =====================================================================
+      // 🅿️ ACTIVE PARK MODE & MOTOR ANTI-THEFT LOCK
+      // =====================================================================
+      if (cruiseControlActive) {
+        cruiseControlActive = false;
+        cruiseTopSpeedStartTime = 0;
+      }
+      targetAmps = 0.0f;
+
+      // Only engage electronic brake when actual measured ERPM reaches/exceeds slider threshold
+      // Below threshold and at standstill, keep motors completely free (0A) to prevent ANY shuddering!
+      float currentErpm = fabs(vescRpm57);
+      if (currentErpm >= parkErpmThreshold) {
+        if (!parkMotionDetected) {
+          parkMotionDetected = true;
+          blePushLine("PARK: MOTION DETECTED (ERPM=" + String(vescRpm57, 0) + ", " + String(vehicleSpeedKmH, 1) + " km/h) -> BRAKING MOTORS");
+        }
+        targetBrakeAmps = parkBrakeAmps;
+        float slaveLockAmps = dualMotorEnabled ? parkBrakeAmps : 0.0f;
+        // Closed-loop VESC electronic brake applies smooth opposing torque in the needed direction
+        sendDualBrakeCurrent(parkBrakeAmps, slaveLockAmps);
+      } else {
+        if (parkMotionDetected) {
+          parkMotionDetected = false;
+          blePushLine("PARK: MOTION STOPPED -> MOTORS SECURED (Standby 0A)");
+        }
+        targetBrakeAmps = 0.0f;
+        // Zero current standby - completely smooth, silent, zero shuddering at standstill
+        sendDualCurrent(0.0f, 0.0f);
+      }
     } else if (kickBlocked && !debouncedBrakeState && !testModeActive) {
       if (cruiseControlActive) {
         cruiseControlActive = false;
@@ -1405,7 +1561,7 @@ void loop() {
 
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[260];
+    char buf[300];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -1413,8 +1569,10 @@ void loop() {
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d PARK=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
+        "SPD=%.1f G=%d PARK=%d PL=%d PE=%.0f PA=%.0f S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
         vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
+        (currentGear == 0 && parkMotionDetected) ? 1 : 0,
+        parkErpmThreshold, parkBrakeAmps,
         profileSSwitch ? 1 : 0, currentVoltageReading, currentRawThrottle,
         debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
         kickBlocked ? "HELD" : "ROLL", ccStatus,

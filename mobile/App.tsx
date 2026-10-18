@@ -88,6 +88,9 @@ export default function App() {
   const [brakeEnabled, setBrakeEnabled] = useState(true);
   const [activeGear, setActiveGear] = useState(1);
   const [parkEnabled, setParkEnabled] = useState(false);
+  const [parkLockActive, setParkLockActive] = useState(false);
+  const [parkErpm, setParkErpm] = useState(100);
+  const [parkBrakeAmps, setParkBrakeAmps] = useState(35);
   const lastNonParkGearRef = useRef<number>(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
   const [absEnabled, setAbsEnabled] = useState(false);
@@ -1299,6 +1302,9 @@ export default function App() {
     const spdMatch = str.match(/SPD=([\d.]+)/);
     const gearMatch = str.match(/(?:G=|GEAR:\s*|GEAR shifted -> Gear\s*)(\d+)/);
     const parkMatch = str.match(/\bPARK=(\d+)/);
+    const plMatch = str.match(/\bPL=(\d+)/);
+    const peMatch = str.match(/\bPE=([\d.]+)/);
+    const paMatch = str.match(/\bPA=([\d.]+)A?/);
     const sMatch = str.match(/S=(\d+)/);
     const vMatch = str.match(/V=([\d.]+)/);
     const rawMatch = str.match(/RAW=(\d+)/);
@@ -1333,7 +1339,20 @@ export default function App() {
     if (tlMatch) setTurnLeftOn(tlMatch[1] === '1');
     if (trMatch) setTurnRightOn(trMatch[1] === '1');
     if (ddmMatch) setDdmActive(ddmMatch[1] === '1');
-    if (parkMatch) setParkEnabled(parkMatch[1] === '1');
+    if (parkMatch) {
+      const en = parkMatch[1] === '1';
+      setParkEnabled(en);
+      if (!en) setParkLockActive(false);
+    }
+    if (plMatch) setParkLockActive(plMatch[1] === '1');
+    if (peMatch) setParkErpm(Math.round(parseFloat(peMatch[1])));
+    const peLog = str.match(/PARK ERPM (?:set to |:\s*)(\d+)/);
+    if (peLog) setParkErpm(parseInt(peLog[1], 10));
+    if (paMatch) setParkBrakeAmps(Math.round(parseFloat(paMatch[1])));
+    const paLog = str.match(/PARK BRAKE AMPS (?:set to |:\s*)(\d+(?:\.\d+)?)/);
+    if (paLog) setParkBrakeAmps(Math.round(parseFloat(paLog[1])));
+    if (str.includes('PARK: MOTION DETECTED')) setParkLockActive(true);
+    if (str.includes('PARK: MOTION STOPPED')) setParkLockActive(false);
 
     if (str.includes('e-ABS ENABLED')) setAbsEnabled(true);
     else if (str.includes('e-ABS DISABLED')) setAbsEnabled(false);
@@ -1493,6 +1512,12 @@ export default function App() {
           setActiveGear(next ? 0 : lastNonParkGearRef.current);
           return next;
         });
+      } else if (cmdStr.startsWith('PE ')) {
+        const e = parseInt(cmdStr.split(' ')[1], 10);
+        if (!isNaN(e)) setParkErpm(e);
+      } else if (cmdStr.startsWith('PA ')) {
+        const a = parseFloat(cmdStr.split(' ')[1]);
+        if (!isNaN(a)) setParkBrakeAmps(Math.round(a));
       } else if (cmdStr.startsWith('UL ') || cmdStr.startsWith('GS ')) {
         const en = cmdStr.split(' ')[1] === '1';
         setUnlockEnabled(en);
@@ -1756,8 +1781,10 @@ export default function App() {
       {/* Badges */}
       <View style={styles.badgeRow}>
         {parkEnabled && (
-          <View style={[styles.badge, styles.badgeCruiseG4]}>
-            <Text style={[styles.badgeText, styles.badgeTextCruiseG4]}>🅿️ PARK</Text>
+          <View style={[styles.badge, parkLockActive ? styles.badgeBraking : styles.badgeCruiseG4]}>
+            <Text style={[styles.badgeText, parkLockActive ? styles.badgeTextBraking : styles.badgeTextCruiseG4]}>
+              {parkLockActive ? '🚨 PARK LOCKED' : '🅿️ PARK'}
+            </Text>
           </View>
         )}
         <View style={[styles.badge, isBraking ? styles.badgeBraking : (!brakeEnabled ? styles.badgeDisabled : null)]}>
@@ -2234,30 +2261,98 @@ export default function App() {
   };
 
   const renderParkCard = () => (
-    <View style={[styles.gearShiftCard, parkEnabled && { borderColor: 'rgba(245, 158, 11, 0.45)', backgroundColor: 'rgba(245, 158, 11, 0.08)' }]}>
+    <View
+      style={[
+        styles.gearShiftCard,
+        parkEnabled && {
+          borderColor: parkLockActive ? 'rgba(239, 68, 68, 0.7)' : 'rgba(245, 158, 11, 0.45)',
+          backgroundColor: parkLockActive ? 'rgba(239, 68, 68, 0.12)' : 'rgba(245, 158, 11, 0.08)',
+        },
+      ]}
+    >
       <View style={styles.gearShiftRow}>
         <View style={styles.gearShiftTextCol}>
           <View style={styles.gearShiftTitleRow}>
-            <Text style={styles.gearShiftTitle}>🅿️ PARK GEAR (P / 0)</Text>
-            <View style={[styles.gearShiftBadge, parkEnabled ? styles.cruiseBadgeG4 : styles.gearShiftBadgeOff]}>
-              <Text style={[styles.gearShiftBadgeText, parkEnabled ? styles.cruiseBadgeTextG4 : styles.gearShiftBadgeTextOff]}>
-                {parkEnabled ? 'PARK ON (DISP 0)' : 'DRIVING (GEAR 1–3)'}
+            <Text style={styles.gearShiftTitle}>🅿️ PARK & MOTOR LOCK (0)</Text>
+            <View
+              style={[
+                styles.gearShiftBadge,
+                parkEnabled
+                  ? (parkLockActive ? styles.badgeBraking : styles.cruiseBadgeG4)
+                  : styles.gearShiftBadgeOff,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.gearShiftBadgeText,
+                  parkEnabled
+                    ? (parkLockActive ? styles.badgeTextBraking : styles.cruiseBadgeTextG4)
+                    : styles.gearShiftBadgeTextOff,
+                ]}
+              >
+                {parkEnabled
+                  ? (parkLockActive ? '🚨 MOTION BLOCKED' : 'PARK ON (DISP 0)')
+                  : 'DRIVING (GEAR 1–3)'}
               </Text>
             </View>
           </View>
           <Text style={styles.gearShiftDesc}>
             {parkEnabled
-              ? `Display is in Park (Gear 0). Toggle OFF or select Gear 1–3 to return to Gear ${lastNonParkGearRef.current}.`
-              : 'Engages Park gear (0) on the handlebar display. Syncs bidirectionally with display buttons & auto-park.'}
+              ? parkLockActive
+                ? 'Motion detected! Applying active directional counter-torque and electromagnetic brake to lock motors.'
+                : `Park active (Gear 0). Motors in 0A silent standby; automatically blocks movement if pushed.`
+              : 'Locks scooter motors when parked. Detects any movement and immediately blocks it via directional brakes.'}
           </Text>
         </View>
         <Switch
           value={parkEnabled}
           onValueChange={togglePark}
-          trackColor={{ false: '#1e293b', true: '#f59e0b' }}
+          trackColor={{ false: '#1e293b', true: parkLockActive ? '#ef4444' : '#f59e0b' }}
           thumbColor={parkEnabled ? '#ffffff' : '#64748b'}
           ios_backgroundColor="#1e293b"
         />
+      </View>
+      <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
+        <View style={styles.sliderHeader}>
+          <Text style={styles.controlLabel}>Motion Sensitivity</Text>
+          <Text style={styles.sliderVal}>{parkErpm} ERPM (≈ {(parkErpm * 0.00319).toFixed(2)} km/h)</Text>
+        </View>
+        <Slider
+          style={styles.slider}
+          minimumValue={20}
+          maximumValue={400}
+          step={10}
+          value={parkErpm}
+          onValueChange={(val) => setParkErpm(val)}
+          onSlidingComplete={(val) => sendCmd(`PE ${val}`)}
+          minimumTrackTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
+          maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+          thumbTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
+        />
+        <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
+          Lower ERPM = higher sensitivity (locks on slight roll). Increase if motor sensor noise triggers false braking.
+        </Text>
+      </View>
+      <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
+        <View style={styles.sliderHeader}>
+          <Text style={styles.controlLabel}>Park Brake Current</Text>
+          <Text style={styles.sliderVal}>{parkBrakeAmps} A</Text>
+        </View>
+        <Slider
+          style={styles.slider}
+          minimumValue={5}
+          maximumValue={120}
+          step={5}
+          value={parkBrakeAmps}
+          onValueChange={(val) => setParkBrakeAmps(val)}
+          onSlidingComplete={(val) => sendCmd(`PA ${val}`)}
+          minimumTrackTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
+          maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+          thumbTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
+        />
+        <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
+          Counter-torque braking strength when motion is detected (5–120A). Increase to lock wheels firmly against pushing.
+        </Text>
       </View>
     </View>
   );
