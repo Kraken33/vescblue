@@ -1,0 +1,5 @@
+0x000063FA (2 Bytes)  52 48 > C9 E0    b #0x08006590 = Bypass der Display-Drossel (Live-Geschwindigkeit 0-199 km/h)
+0x00003506 (2 Bytes)  1C 48 > 70 47    bx lr = Deaktiviert alle Überspringungen (Schaltet P01 bis P23 lückenlos frei!)
+0x00005120 (2 Bytes)  03 20 > 01 20    Boot/Default-Initialisierung: P-Menü startet ab P01 statt P03
+0x00003502 (2 Bytes)  03 20 > 01 20    P-Menü Wrap-Around: Nach P23 wieder auf P01 springen statt P03
+0x0000FE00-0xFFFF           > 00       Alle 100 NVRAM-Ringpuffer-Slots auf Profil 0x00 (Offen), 0x01 (EU), 0x02 (ABE) 0x03 (Tastentrick)
