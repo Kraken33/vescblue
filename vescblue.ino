@@ -163,7 +163,8 @@ uint8_t displayTxCounter = 0;
 unsigned long lastDisplayTxTime = 0;
 
 int currentGear = 1;
-int lastRawGear = 0;
+int lastNonParkGear = 1;
+int lastRawGear = -1;
 uint8_t displayTargetGear = 0;
 uint8_t displayGearSyncRemaining = 0;
 bool displayLightState = false;
@@ -472,8 +473,12 @@ void updateKickStartForGear() {
 }
 
 void updateActiveProfile() {
-  if (currentGear <= 1) {
-    currentGear = 1;
+  if (currentGear <= 0) {
+    currentGear = 0;
+    // Park gear (0) on display; VESC park implementation to be added later
+    activeProfile = PROFILE_1_LOCKED;
+    profileSSwitch = false;
+  } else if (currentGear == 1) {
     if (unlockEnabled) {
       unlockEnabled = false;
       gearShiftEnabled = false;
@@ -502,7 +507,10 @@ void updateActiveProfile() {
 }
 
 void setGear(int newGear, bool syncToDisplay = true) {
-  currentGear = constrain(newGear, 1, 3);
+  currentGear = constrain(newGear, 0, 3);
+  if (currentGear >= 1 && currentGear <= 3) {
+    lastNonParkGear = currentGear;
+  }
 
   if (syncToDisplay) {
     displayTargetGear = (uint8_t)currentGear;
@@ -510,11 +518,13 @@ void setGear(int newGear, bool syncToDisplay = true) {
     lastRawGear = currentGear * 5;
   }
 
-  // Shift gear history
-  for (int i = 0; i < 6; i++) {
-    gearHistory[i] = gearHistory[i + 1];
+  // Shift gear history for gears 1..3
+  if (currentGear >= 1) {
+    for (int i = 0; i < 6; i++) {
+      gearHistory[i] = gearHistory[i + 1];
+    }
+    gearHistory[6] = (uint8_t)currentGear;
   }
-  gearHistory[6] = (uint8_t)currentGear;
 
   // Safety relock: switching to Gear 1 immediately locks scooter to 5, 15, 20 km/h
   if (currentGear == 1 && unlockEnabled) {
@@ -526,7 +536,7 @@ void setGear(int newGear, bool syncToDisplay = true) {
     blePushLine("UNLOCK: RELOCKED (Gear 1 Safety) UL=0 G=1");
   }
 
-  // Cruise control suspended in Gear 3 Unlocked (Sport)
+  // Cruise control suspended in Gear 3 Unlocked (Sport) or Park (0)
   if (currentGear == 3 && unlockEnabled && bleClientConnected) {
     profileSSwitch = true;
     if (cruiseControlActive) {
@@ -536,28 +546,35 @@ void setGear(int newGear, bool syncToDisplay = true) {
     }
   } else {
     profileSSwitch = false;
+    if (currentGear == 0 && cruiseControlActive) {
+      cruiseControlActive = false;
+      cruiseTopSpeedStartTime = 0;
+    }
   }
 
   updateActiveProfile();
 
-  char gbuf[160];
+  char gbuf[170];
   snprintf(gbuf, sizeof(gbuf),
-           "GEAR: %d (%s, Limit: %.0f km/h, %.0f A, %s) G=%d UL=%d",
-           currentGear, activeProfile.name, activeProfile.speedLimitKmH,
-           activeProfile.maxCurrentAmps,
+           "GEAR: %d (%s, Limit: %.0f km/h, %.0f A, %s) G=%d PARK=%d UL=%d",
+           currentGear, (currentGear == 0) ? "Park" : activeProfile.name,
+           activeProfile.speedLimitKmH, activeProfile.maxCurrentAmps,
            (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start",
-           currentGear, (unlockEnabled && bleClientConnected) ? 1 : 0);
+           currentGear, (currentGear == 0) ? 1 : 0,
+           (unlockEnabled && bleClientConnected) ? 1 : 0);
   blePushLine(String(gbuf));
 }
 
 int getDisplayGear(int raw) {
+  if (raw == 0)
+    return 0;
   if (raw == 5 || raw == 1)
     return 1;
   if (raw == 10 || raw == 2)
     return 2;
   if (raw == 15 || raw == 3)
     return 3;
-  return constrain(raw, 1, 3);
+  return constrain(raw, 0, 3);
 }
 
 int calculateMappedGear(int raw) {
@@ -581,7 +598,6 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   if (displayGearSyncRemaining > 0) {
     if (rawGear == displayTargetGear * 5 || rawGear == displayTargetGear) {
       displayGearSyncRemaining = 0;
-      displayTargetGear = 0;
       lastRawGear = rawGear;
     }
   } else if (rawGear != lastRawGear) {
@@ -635,20 +651,17 @@ void sendDisplayTxPacket(float speedMps) {
   // Byte 4:
   //   Bit 7 (0x80 = 128): ESP32 BLE app connected (Bluetooth icon on display)
   //   Bit 5 (0x20 = 32):  S-Mode flag (unlocked Sport mode)
-  //   Bits 0..1 (0x03):   Optional gear override (1..3)
+  //   Bit 2 (0x04 = 4):   Gear override command valid flag
+  //   Bits 0..1 (0x03):   Target gear (0 = Park, 1 = Gear 1, 2 = Gear 2, 3 = Gear 3)
   if (bleClientConnected) {
     txBuf[4] |= 0x80;
   }
   if (profileSSwitch) {
     txBuf[4] |= 32;
   }
-  if (displayGearSyncRemaining > 0 && displayTargetGear >= 1 &&
-      displayTargetGear <= 3) {
-    txBuf[4] |= (displayTargetGear & 0x03);
+  if (displayGearSyncRemaining > 0 && displayTargetGear <= 3) {
+    txBuf[4] |= 0x04 | (displayTargetGear & 0x03);
     displayGearSyncRemaining--;
-    if (displayGearSyncRemaining == 0) {
-      displayTargetGear = 0;
-    }
   }
 
   // Bytes 7 & 8: Speed in Big Endian
@@ -745,13 +758,14 @@ void bleHandleCommand(const String &cmd) {
             : ((currentGear >= 3 && unlockEnabled && bleClientConnected) ? "G4"
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(buf, sizeof(buf),
-             "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
+             "SPD=%.1f G=%d PARK=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
              "LIM=%.0fkm/h KICK=%s(%.0f) UL=%d GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
              "BC=%.1fA ABS=%d AF=%d ABSS=%d CAN=%d",
-             vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-             currentVoltageReading, currentRawThrottle,
+             vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
+             profileSSwitch ? 1 : 0, currentVoltageReading, currentRawThrottle,
              debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
-             activeProfile.name, activeProfile.speedLimitKmH,
+             (currentGear == 0) ? "Park" : activeProfile.name,
+             activeProfile.speedLimitKmH,
              (KICK_RPM_ERPM > 0.0f) ? "ON" : "ZERO", KICK_RPM_ERPM,
              (unlockEnabled && bleClientConnected) ? 1 : 0,
              (unlockEnabled && bleClientConnected) ? 1 : 0, ccStatus,
@@ -777,8 +791,8 @@ void bleHandleCommand(const String &cmd) {
       val = cmd.substring(3).toInt();
 
     if (val != 0) {
-      if (currentGear == 1) {
-        blePushLine("ERR cannot unlock in gear 1 (shift to 2 or 3 first)");
+      if (currentGear <= 1) {
+        blePushLine("ERR cannot unlock in Park/Gear 1 (shift to 2 or 3 first)");
       } else {
         unlockEnabled = true;
         gearShiftEnabled = true;
@@ -834,20 +848,34 @@ void bleHandleCommand(const String &cmd) {
     }
     blePushLine("BRAKE SENSOR " +
                 String(brakeEnabled ? "ENABLED" : "DISABLED"));
+  } else if (cmd == "PARK") {
+    int target = (currentGear == 0) ? (lastNonParkGear >= 1 ? lastNonParkGear : 1) : 0;
+    setGear(target);
+  } else if (cmd.startsWith("PARK ")) {
+    String arg = cmd.substring(5);
+    arg.trim();
+    bool en = (arg == "1" || arg.equalsIgnoreCase("ON"));
+    if (en) {
+      setGear(0);
+    } else {
+      setGear(lastNonParkGear >= 1 ? lastNonParkGear : 1);
+    }
   } else if (cmd.startsWith("G ") || cmd.startsWith("P ")) {
     int g = cmd.substring(2).toInt();
-    if (g >= 1 && g <= 3) {
+    if (g >= 0 && g <= 3) {
       setGear(g);
-      char pbuf[140];
+      char pbuf[150];
       snprintf(pbuf, sizeof(pbuf),
-               "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s) G=%d UL=%d", g,
-               activeProfile.name, activeProfile.speedLimitKmH,
+               "PROFILE %d: %s (Limit: %.0f km/h, %.0f ERPM, %.0f A, %s) G=%d PARK=%d UL=%d", g,
+               (currentGear == 0) ? "Park" : activeProfile.name,
+               activeProfile.speedLimitKmH,
                activeProfile.maxErpm, activeProfile.maxCurrentAmps,
                (KICK_RPM_ERPM > 0.0f) ? "Kick-start" : "Zero-start",
-               currentGear, (unlockEnabled && bleClientConnected) ? 1 : 0);
+               currentGear, (currentGear == 0) ? 1 : 0,
+               (unlockEnabled && bleClientConnected) ? 1 : 0);
       blePushLine(String(pbuf));
     } else {
-      blePushLine("ERR profile 1..3 (1=5km/h, 2=15/25km/h, 3=20/Unlim km/h)");
+      blePushLine("ERR profile 0..3 (0=Park, 1=5km/h, 2=15/25km/h, 3=20/Unlim km/h)");
     }
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
@@ -1377,7 +1405,7 @@ void loop() {
 
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[250];
+    char buf[260];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -1385,11 +1413,11 @@ void loop() {
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
-        vehicleSpeedKmH, currentGear, profileSSwitch ? 1 : 0,
-        currentVoltageReading, currentRawThrottle, debouncedBrakeState ? 1 : 0,
-        brakeEnabled ? 1 : 0, targetAmps, kickBlocked ? "HELD" : "ROLL",
-        ccStatus,
+        "SPD=%.1f G=%d PARK=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
+        vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
+        profileSSwitch ? 1 : 0, currentVoltageReading, currentRawThrottle,
+        debouncedBrakeState ? 1 : 0, brakeEnabled ? 1 : 0, targetAmps,
+        kickBlocked ? "HELD" : "ROLL", ccStatus,
         lights.isFrontLightOn() ? 1 : 0,
         lights.isTurnLeftActive() ? 1 : 0,
         lights.isTurnRightActive() ? 1 : 0,

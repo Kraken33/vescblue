@@ -32,11 +32,11 @@ SPEED = [("speed", 0x63FA, b"\x52\x48", b"\xC9\xE0",
           "b 0x08006590: bypass display speed clamp (live speed 0-199 km/h)")]
 GEAR_CTRL = [
     ("gear-hook-call", 0x6D12, bytes.fromhex("d5488478"), bytes.fromhex("fff775fb"),
-     "bl 0x08006400: hook 0x36 UART RX handler to apply gear from rxBuf[4] & 0x03"),
+     "bl 0x08006400: hook 0x36 UART RX handler to apply gear from rxBuf[4] (bit 2 valid, bits 0..1 gear 0..3)"),
     ("gear-hook-body", 0x6400,
      bytes.fromhex("49d045480078002822d04d480078012804d002280ad0032818d10fe04a480088052802dd06204849088010e046480088082802dd"),
-     bytes.fromhex("0848027903231a4009d0074b1a700022064b1a80064b1a88202002431a800148704700bf68020020f4000020e2010020ae010020"),
-     "gear_hook at 0x08006400: if (rxBuf[4] & 3) != 0 -> *(0x200000f4) = gear, reset idle timer"),
+     bytes.fromhex("08480279d3080cd303231a40064b1a700022064b1a80064b1a88202002431a800048704768020020f4000020e2010020ae010020"),
+     "gear_hook at 0x08006400: if (rxBuf[4] & 4) != 0 -> *(0x200000f4) = rxBuf[4] & 3 (0=Park, 1..3=Gear), reset idle timer"),
 ]
 BT_ICON = [
     ("bt-icon-branch", 0x634A, bytes.fromhex("022803d07648"), bytes.fromhex("012803d008e0"),

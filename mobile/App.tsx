@@ -87,6 +87,8 @@ export default function App() {
   const [isBraking, setIsBraking] = useState(false);
   const [brakeEnabled, setBrakeEnabled] = useState(true);
   const [activeGear, setActiveGear] = useState(1);
+  const [parkEnabled, setParkEnabled] = useState(false);
+  const lastNonParkGearRef = useRef<number>(1);
   const [brakeAmps, setBrakeAmps] = useState(25);
   const [absEnabled, setAbsEnabled] = useState(false);
   const [absFreq, setAbsFreq] = useState(10);
@@ -1296,6 +1298,7 @@ export default function App() {
 
     const spdMatch = str.match(/SPD=([\d.]+)/);
     const gearMatch = str.match(/(?:G=|GEAR:\s*|GEAR shifted -> Gear\s*)(\d+)/);
+    const parkMatch = str.match(/\bPARK=(\d+)/);
     const sMatch = str.match(/S=(\d+)/);
     const vMatch = str.match(/V=([\d.]+)/);
     const rawMatch = str.match(/RAW=(\d+)/);
@@ -1330,6 +1333,7 @@ export default function App() {
     if (tlMatch) setTurnLeftOn(tlMatch[1] === '1');
     if (trMatch) setTurnRightOn(trMatch[1] === '1');
     if (ddmMatch) setDdmActive(ddmMatch[1] === '1');
+    if (parkMatch) setParkEnabled(parkMatch[1] === '1');
 
     if (str.includes('e-ABS ENABLED')) setAbsEnabled(true);
     else if (str.includes('e-ABS DISABLED')) setAbsEnabled(false);
@@ -1393,9 +1397,15 @@ export default function App() {
 
     if (gearMatch) {
       let g = parseInt(gearMatch[1], 10);
-      if (g >= 1 && g <= 3) {
+      if (g === 0) {
+        espGearRef.current = 0;
+        setActiveGear(0);
+        setParkEnabled(true);
+      } else if (g >= 1 && g <= 3) {
         espGearRef.current = g;
+        lastNonParkGearRef.current = g;
         setActiveGear(g);
+        setParkEnabled(false);
       }
     }
   };
@@ -1463,9 +1473,26 @@ export default function App() {
     if (isDemoMode) {
       addConsole(`[SIM-TX] ${cmdStr}`);
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      if (cmdStr.startsWith('P ')) {
+      if (cmdStr.startsWith('P ') || cmdStr.startsWith('G ')) {
         const g = parseInt(cmdStr.split(' ')[1], 10);
-        if (g >= 1 && g <= 3) setActiveGear(g);
+        if (g === 0) {
+          setParkEnabled(true);
+          setActiveGear(0);
+        } else if (g >= 1 && g <= 3) {
+          setParkEnabled(false);
+          lastNonParkGearRef.current = g;
+          setActiveGear(g);
+        }
+      } else if (cmdStr.startsWith('PARK ')) {
+        const en = cmdStr.split(' ')[1] === '1';
+        setParkEnabled(en);
+        setActiveGear(en ? 0 : lastNonParkGearRef.current);
+      } else if (cmdStr === 'PARK') {
+        setParkEnabled((prev) => {
+          const next = !prev;
+          setActiveGear(next ? 0 : lastNonParkGearRef.current);
+          return next;
+        });
       } else if (cmdStr.startsWith('UL ') || cmdStr.startsWith('GS ')) {
         const en = cmdStr.split(' ')[1] === '1';
         setUnlockEnabled(en);
@@ -1519,11 +1546,27 @@ export default function App() {
     sendCmd(nextState ? 'DUAL 1' : 'DUAL 0');
   };
 
+  const togglePark = (val: boolean) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setParkEnabled(val);
+    if (val) {
+      if (activeGear >= 1 && activeGear <= 3) {
+        lastNonParkGearRef.current = activeGear;
+      }
+      setActiveGear(0);
+      sendCmd('PARK 1');
+    } else {
+      const restoreGear = lastNonParkGearRef.current >= 1 ? lastNonParkGearRef.current : 1;
+      setActiveGear(restoreGear);
+      sendCmd('PARK 0');
+    }
+  };
+
   const toggleUnlock = (val: boolean) => {
-    if (val && activeGear === 1) {
+    if (val && activeGear <= 1) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       Alert.alert(
-        'Cannot Unlock in 1st Gear',
+        'Cannot Unlock in Park / 1st Gear',
         'Please shift to Gear 2 or Gear 3 on the handlebar display or app before activating Unlock.',
         [{ text: 'OK' }]
       );
@@ -1574,6 +1617,10 @@ export default function App() {
   };
 
   const selectProfile = (gear: number) => {
+    setParkEnabled(gear === 0);
+    if (gear >= 1 && gear <= 3) {
+      lastNonParkGearRef.current = gear;
+    }
     if (gear === 1 && unlockEnabled) {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
       setUnlockEnabled(false);
@@ -1708,6 +1755,11 @@ export default function App() {
 
       {/* Badges */}
       <View style={styles.badgeRow}>
+        {parkEnabled && (
+          <View style={[styles.badge, styles.badgeCruiseG4]}>
+            <Text style={[styles.badgeText, styles.badgeTextCruiseG4]}>🅿️ PARK</Text>
+          </View>
+        )}
         <View style={[styles.badge, isBraking ? styles.badgeBraking : (!brakeEnabled ? styles.badgeDisabled : null)]}>
           <Text style={[styles.badgeText, isBraking && styles.badgeTextBraking]}>
             {!brakeEnabled
@@ -1767,7 +1819,9 @@ export default function App() {
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>SPEED PROFILES</Text>
         <Text style={styles.activeProfileLabel}>
-          Gear {activeGear} {unlockEnabled ? '(Unlocked 25 / Unlim)' : '(Locked 5 / 15 / 20)'}
+          {parkEnabled || activeGear === 0
+            ? '🅿️ Park (Gear 0)'
+            : `Gear ${activeGear} ${unlockEnabled ? '(Unlocked 25 / Unlim)' : '(Locked 5 / 15 / 20)'}`}
         </Text>
       </View>
 
@@ -2178,6 +2232,35 @@ export default function App() {
       </View>
     );
   };
+
+  const renderParkCard = () => (
+    <View style={[styles.gearShiftCard, parkEnabled && { borderColor: 'rgba(245, 158, 11, 0.45)', backgroundColor: 'rgba(245, 158, 11, 0.08)' }]}>
+      <View style={styles.gearShiftRow}>
+        <View style={styles.gearShiftTextCol}>
+          <View style={styles.gearShiftTitleRow}>
+            <Text style={styles.gearShiftTitle}>🅿️ PARK GEAR (P / 0)</Text>
+            <View style={[styles.gearShiftBadge, parkEnabled ? styles.cruiseBadgeG4 : styles.gearShiftBadgeOff]}>
+              <Text style={[styles.gearShiftBadgeText, parkEnabled ? styles.cruiseBadgeTextG4 : styles.gearShiftBadgeTextOff]}>
+                {parkEnabled ? 'PARK ON (DISP 0)' : 'DRIVING (GEAR 1–3)'}
+              </Text>
+            </View>
+          </View>
+          <Text style={styles.gearShiftDesc}>
+            {parkEnabled
+              ? `Display is in Park (Gear 0). Toggle OFF or select Gear 1–3 to return to Gear ${lastNonParkGearRef.current}.`
+              : 'Engages Park gear (0) on the handlebar display. Syncs bidirectionally with display buttons & auto-park.'}
+          </Text>
+        </View>
+        <Switch
+          value={parkEnabled}
+          onValueChange={togglePark}
+          trackColor={{ false: '#1e293b', true: '#f59e0b' }}
+          thumbColor={parkEnabled ? '#ffffff' : '#64748b'}
+          ios_backgroundColor="#1e293b"
+        />
+      </View>
+    </View>
+  );
 
   const renderUnlockCard = () => (
     <View style={styles.gearShiftCard}>
@@ -2978,6 +3061,7 @@ export default function App() {
                 </View>
                 {renderLightsCard()}
                 {renderAntisparkCard()}
+                {renderParkCard()}
                 {renderGearShiftCard()}
                 {renderCruiseCard()}
                 {renderBrakeCard()}
@@ -3021,6 +3105,7 @@ export default function App() {
           {renderTelemetry(false)}
           {renderLightsCard()}
           {renderAntisparkCard()}
+          {renderParkCard()}
           {renderGearShiftCard()}
           {renderCruiseCard()}
           {renderProfiles(false)}
