@@ -29,7 +29,7 @@ DEFAULT_WHEEL_INCH = 10.0      # P06_WHEEL_DIAMETER_INCH
 DEFAULT_MAGNET_POLES = 30.0    # P07_MAGNET_POLES (15 pole pairs)
 DEFAULT_SPEED_FACTOR = 1.52069 # SPEED_CALC_FACTOR
 DEFAULT_BAUD = 1200            # DISPLAY_BAUD (1200 baud, 8N1)
-DEFAULT_INTERVAL_SEC = 0.150   # 150ms packet interval (from vescblue.ino)
+DEFAULT_INTERVAL_SEC = 0.200   # 200ms packet interval (125ms wire + 75ms idle gap)
 
 ENCODING_KEY_ARRAY = [
     0x5e, 0x23, 0x5c, 0x21, 0x2a, 0x2f, 0x28, 0x2d, 0x26, 0x2b, 0x24, 0x29,
@@ -69,7 +69,8 @@ def calculate_display_speed(speed_kmh: float, wheel_inch: float = DEFAULT_WHEEL_
 
 
 def build_tx_packet(counter: int, disp_speed: int, sport_mode: bool = True,
-                    target_gear: int = 0) -> bytes:
+                    target_gear: int = 0, turn_left: bool = False,
+                    turn_right: bool = False) -> bytes:
     """Construct and encrypt a 15-byte display packet (vescblue.ino sendDisplayTxPacket)."""
     buf = bytearray(15)
 
@@ -88,6 +89,12 @@ def build_tx_packet(counter: int, disp_speed: int, sport_mode: bool = True,
     # Bytes 7 & 8: Speed in Big Endian
     buf[7] = (disp_speed >> 8) & 0xFF
     buf[8] = disp_speed & 0xFF
+
+    # Byte 13: Turn signal indicators on display LCD (bit 7 = Left, bit 6 = Right)
+    if turn_left:
+        buf[13] |= 0x80
+    if turn_right:
+        buf[13] |= 0x40
 
     # Encryption: add rolling key from table to selected bytes
     enc_key = ENCODING_KEY_ARRAY[counter % 128]

@@ -650,6 +650,14 @@ void sendDisplayTxPacket(float speedMps) {
   txBuf[7] = (dispSpeed >> 8) & 0xFF;
   txBuf[8] = dispSpeed & 0xFF;
 
+  // Byte 13: Turn signal indicators on display LCD (bit 7 = Left, bit 6 = Right)
+  if (lights.isTurnLeftActive()) {
+    txBuf[13] |= 0x80;
+  }
+  if (lights.isTurnRightActive()) {
+    txBuf[13] |= 0x40;
+  }
+
   // Encryption
   uint8_t encKey = ENCODING_KEY_ARRAY[displayTxCounter % 128];
   for (size_t i = 0; i < sizeof(ENCODED_BYTES); i++) {
@@ -703,9 +711,10 @@ void processDisplayUart(float speedMps) {
     }
   }
 
-  // Send packet to display every 150ms
+  // Send packet to display every 200ms (15 bytes @ 1200 baud = 125ms wire time
+  // + 75ms idle gap required for display >40ms inter-frame timer)
   unsigned long now = millis();
-  if (now - lastDisplayTxTime >= 150) {
+  if (now - lastDisplayTxTime >= 200) {
     lastDisplayTxTime = now;
     sendDisplayTxPacket(speedMps);
   }
