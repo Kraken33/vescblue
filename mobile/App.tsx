@@ -186,6 +186,37 @@ export default function App() {
     pagerRef.current?.scrollTo({ x: page * landscapePageWidth, animated: true });
   };
 
+  // Collapsible Settings Sections (all collapsed by default)
+  const [openSections, setOpenSections] = useState<{ [key: string]: boolean }>({
+    lights: false,
+    antispark: false,
+    park: false,
+    unlock: false,
+    cruise: false,
+    brake: false,
+  });
+
+  const toggleSection = (section: string) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setOpenSections((prev) => ({
+      ...prev,
+      [section]: !prev[section],
+    }));
+  };
+
+  const toggleAllSections = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const nextState = !Object.values(openSections).every(Boolean);
+    setOpenSections({
+      lights: nextState,
+      antispark: nextState,
+      park: nextState,
+      unlock: nextState,
+      cruise: nextState,
+      brake: nextState,
+    });
+  };
+
   // Console State
   const [consoleOpen, setConsoleOpen] = useState(false);
   const [consoleLines, setConsoleLines] = useState<string[]>(['Scooter Native BLE Ready']);
@@ -1022,6 +1053,9 @@ export default function App() {
 
       // Mark connected only once characteristic is confirmed and monitored
       setIsConnected(true);
+      setIsMainConnecting(false);
+      isMainConnectingRef.current = false;
+      setIsScanning(false);
       setStatusText('Connected to Scooter-ESP32');
       addConsole('[BLE] Main Scooter Connected & Telemetry Active!');
       activateKeepAwakeAsync();
@@ -1287,6 +1321,7 @@ export default function App() {
     charRef.current = null;
     isMainConnectingRef.current = false;
     setIsMainConnecting(false);
+    setIsScanning(false);
     setStatusText('Disconnected');
     addConsole('[BLE] Disconnected');
     deactivateKeepAwake();
@@ -1296,6 +1331,13 @@ export default function App() {
   // Parse Telemetry packet
   const parseTelemetry = (str: string) => {
     lastTelemetryTimeRef.current = Date.now();
+    if (!isConnected && (charRef.current || deviceRef.current)) {
+      setIsConnected(true);
+      setIsMainConnecting(false);
+      isMainConnectingRef.current = false;
+      setIsScanning(false);
+      setStatusText('Connected to Scooter-ESP32');
+    }
     // Format: SPD=%.1f G=%d S=%d V=%.2f RAW=%d BRK=%d AMP=%.1f KICK=%s
     addConsole(str);
 
@@ -1913,7 +1955,11 @@ export default function App() {
     return (
       <View style={styles.antisparkCard}>
         {/* Header Row */}
-        <View style={styles.antisparkHeaderRow}>
+        <TouchableOpacity
+          style={styles.antisparkHeaderRow}
+          onPress={() => toggleSection('antispark')}
+          activeOpacity={0.7}
+        >
           <View style={styles.antisparkHeaderLeft}>
             <Text style={styles.antisparkTitle}>⚡ ANTISPARK POWER SWITCH</Text>
             <Text style={styles.antisparkSubStatus}>
@@ -1924,10 +1970,30 @@ export default function App() {
                 : '⚪ Disconnected (Power OFF)'}
             </Text>
           </View>
-        </View>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+            <View
+              style={[
+                styles.antisparkStateTag,
+                antisparkState ? styles.antisparkStateTagActive : styles.antisparkStateTagInactive,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.antisparkStateTagText,
+                  antisparkState && styles.antisparkStateTagTextActive,
+                ]}
+              >
+                {antisparkState ? 'POWER ON' : 'POWER OFF'}
+              </Text>
+            </View>
+            <Text style={styles.sectionToggleIcon}>{openSections.antispark ? '▲' : '▼'}</Text>
+          </View>
+        </TouchableOpacity>
 
-        {/* Dedicated Main Power Action Button */}
-        <View style={styles.dedicatedPowerButtonWrap}>
+        {openSections.antispark && (
+          <View style={{ gap: 10, marginTop: 4 }}>
+            {/* Dedicated Main Power Action Button */}
+            <View style={styles.dedicatedPowerButtonWrap}>
           {isAntisparkConnected ? (
             <View style={styles.powerConnectedBox}>
               <View style={styles.powerConnectedTopRow}>
@@ -1983,8 +2049,8 @@ export default function App() {
         {/* Automatic Cutoff Toggle Card */}
         <View style={styles.autoCutoffCard}>
           <View style={styles.autoCutoffHeaderRow}>
-            <View style={{ flex: 1, gap: 2 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ flex: 1, minWidth: 0, gap: 3, marginRight: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <Text style={styles.autoCutoffTitle}>🛡️ AUTO TURN OFF ON DISCONNECT</Text>
                 <View
                   style={[
@@ -1998,7 +2064,7 @@ export default function App() {
                       antisparkAutoCutoff ? styles.autoCutoffBadgeTextActive : styles.autoCutoffBadgeTextDisabled,
                     ]}
                   >
-                    {antisparkAutoCutoff ? 'AUTO-OFF ACTIVE' : 'STAYS ON'}
+                    {antisparkAutoCutoff ? 'AUTO-OFF' : 'OFF'}
                   </Text>
                 </View>
               </View>
@@ -2008,13 +2074,15 @@ export default function App() {
                   : '⚠️ Scooter stays powered ON if app closes, reloads during debugging, or disconnects.'}
               </Text>
             </View>
-            <Switch
-              value={antisparkAutoCutoff}
-              onValueChange={toggleAntisparkAutoCutoff}
-              trackColor={{ false: '#334155', true: '#38bdf8' }}
-              thumbColor={antisparkAutoCutoff ? '#ffffff' : '#94a3b8'}
-              ios_backgroundColor="#334155"
-            />
+            <View style={{ flexShrink: 0 }}>
+              <Switch
+                value={antisparkAutoCutoff}
+                onValueChange={toggleAntisparkAutoCutoff}
+                trackColor={{ false: '#334155', true: '#38bdf8' }}
+                thumbColor={antisparkAutoCutoff ? '#ffffff' : '#94a3b8'}
+                ios_backgroundColor="#334155"
+              />
+            </View>
           </View>
         </View>
 
@@ -2044,8 +2112,8 @@ export default function App() {
         {/* Apple iBeacon Hands-Free Auto Key Card */}
         <View style={styles.ibeaconCard}>
           <View style={styles.ibeaconHeaderRow}>
-            <View style={{ flex: 1, gap: 2 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            <View style={{ flex: 1, minWidth: 0, gap: 3, marginRight: 10 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
                 <Text style={styles.ibeaconTitle}>🍎 APPLE iBEACON AUTO-IGNITION</Text>
                 <View style={[styles.beaconBadge, iBeaconAutoKey ? styles.beaconBadgeActive : styles.beaconBadgeInactive]}>
                   <Text style={styles.beaconBadgeText}>
@@ -2059,25 +2127,27 @@ export default function App() {
                   : 'Hands-free beacon wake-up disabled. Manual button control only.'}
               </Text>
             </View>
-            <Switch
-              value={iBeaconAutoKey}
-              onValueChange={(val) => {
-                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                setIBeaconAutoKey(val);
-                iBeaconAutoKeyRef.current = val;
-                if (val) {
-                  ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
-                  setIBeaconStatus('Armed • Listening');
-                } else {
-                  ScooterBeacon.stopMonitoring();
-                  setIBeaconStatus('Disabled');
-                  setIBeaconProximity('unknown');
-                }
-              }}
-              trackColor={{ false: '#1e293b', true: '#00f2fe' }}
-              thumbColor={iBeaconAutoKey ? '#ffffff' : '#64748b'}
-              ios_backgroundColor="#1e293b"
-            />
+            <View style={{ flexShrink: 0 }}>
+              <Switch
+                value={iBeaconAutoKey}
+                onValueChange={(val) => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                  setIBeaconAutoKey(val);
+                  iBeaconAutoKeyRef.current = val;
+                  if (val) {
+                    ScooterBeacon.startMonitoring(IBEACON_PROXIMITY_UUID, IBEACON_MAJOR, IBEACON_MINOR);
+                    setIBeaconStatus('Armed • Listening');
+                  } else {
+                    ScooterBeacon.stopMonitoring();
+                    setIBeaconStatus('Disabled');
+                    setIBeaconProximity('unknown');
+                  }
+                }}
+                trackColor={{ false: '#1e293b', true: '#00f2fe' }}
+                thumbColor={iBeaconAutoKey ? '#ffffff' : '#64748b'}
+                ios_backgroundColor="#1e293b"
+              />
+            </View>
           </View>
 
           {/* iBeacon Real-Time Proximity Radar Pill */}
@@ -2255,6 +2325,8 @@ export default function App() {
             </View>
           )}
         </View>
+        </View>
+        )}
 
       </View>
     );
@@ -2270,7 +2342,11 @@ export default function App() {
         },
       ]}
     >
-      <View style={styles.gearShiftRow}>
+      <TouchableOpacity
+        style={styles.cardHeaderCollapseRow}
+        onPress={() => toggleSection('park')}
+        activeOpacity={0.7}
+      >
         <View style={styles.gearShiftTextCol}>
           <View style={styles.gearShiftTitleRow}>
             <Text style={styles.gearShiftTitle}>🅿️ PARK & MOTOR LOCK (0)</Text>
@@ -2296,7 +2372,7 @@ export default function App() {
               </Text>
             </View>
           </View>
-          <Text style={styles.gearShiftDesc}>
+          <Text style={styles.gearShiftDesc} numberOfLines={openSections.park ? undefined : 1}>
             {parkEnabled
               ? parkLockActive
                 ? 'Motion detected! Applying active directional counter-torque and electromagnetic brake to lock motors.'
@@ -2304,62 +2380,75 @@ export default function App() {
               : 'Locks scooter motors when parked. Detects any movement and immediately blocks it via directional brakes.'}
           </Text>
         </View>
-        <Switch
-          value={parkEnabled}
-          onValueChange={togglePark}
-          trackColor={{ false: '#1e293b', true: parkLockActive ? '#ef4444' : '#f59e0b' }}
-          thumbColor={parkEnabled ? '#ffffff' : '#64748b'}
-          ios_backgroundColor="#1e293b"
-        />
-      </View>
-      <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
-        <View style={styles.sliderHeader}>
-          <Text style={styles.controlLabel}>Motion Sensitivity</Text>
-          <Text style={styles.sliderVal}>{parkErpm} ERPM (≈ {(parkErpm * 0.00319).toFixed(2)} km/h)</Text>
+        <Text style={styles.sectionToggleIcon}>{openSections.park ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {openSections.park && (
+        <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <Text style={[styles.controlLabel, { fontSize: 13 }]}>Engage Park & Motor Lock</Text>
+            <Switch
+              value={parkEnabled}
+              onValueChange={togglePark}
+              trackColor={{ false: '#1e293b', true: parkLockActive ? '#ef4444' : '#f59e0b' }}
+              thumbColor={parkEnabled ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
+            />
+          </View>
+          <View style={{ marginTop: 6, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
+            <View style={styles.sliderHeader}>
+              <Text style={styles.controlLabel}>Motion Sensitivity</Text>
+              <Text style={styles.sliderVal}>{parkErpm} ERPM (≈ {(parkErpm * 0.00319).toFixed(2)} km/h)</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={20}
+              maximumValue={400}
+              step={10}
+              value={parkErpm}
+              onValueChange={(val) => setParkErpm(val)}
+              onSlidingComplete={(val) => sendCmd(`PE ${val}`)}
+              minimumTrackTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
+              maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+              thumbTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
+            />
+            <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
+              Lower ERPM = higher sensitivity (locks on slight roll). Increase if motor sensor noise triggers false braking.
+            </Text>
+          </View>
+          <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
+            <View style={styles.sliderHeader}>
+              <Text style={styles.controlLabel}>Park Brake Current</Text>
+              <Text style={styles.sliderVal}>{parkBrakeAmps} A</Text>
+            </View>
+            <Slider
+              style={styles.slider}
+              minimumValue={5}
+              maximumValue={120}
+              step={5}
+              value={parkBrakeAmps}
+              onValueChange={(val) => setParkBrakeAmps(val)}
+              onSlidingComplete={(val) => sendCmd(`PA ${val}`)}
+              minimumTrackTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
+              maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+              thumbTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
+            />
+            <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
+              Counter-torque braking strength when motion is detected (5–120A). Increase to lock wheels firmly against pushing.
+            </Text>
+          </View>
         </View>
-        <Slider
-          style={styles.slider}
-          minimumValue={20}
-          maximumValue={400}
-          step={10}
-          value={parkErpm}
-          onValueChange={(val) => setParkErpm(val)}
-          onSlidingComplete={(val) => sendCmd(`PE ${val}`)}
-          minimumTrackTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
-          maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-          thumbTintColor={parkEnabled ? '#f59e0b' : '#38bdf8'}
-        />
-        <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
-          Lower ERPM = higher sensitivity (locks on slight roll). Increase if motor sensor noise triggers false braking.
-        </Text>
-      </View>
-      <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 8 }}>
-        <View style={styles.sliderHeader}>
-          <Text style={styles.controlLabel}>Park Brake Current</Text>
-          <Text style={styles.sliderVal}>{parkBrakeAmps} A</Text>
-        </View>
-        <Slider
-          style={styles.slider}
-          minimumValue={5}
-          maximumValue={120}
-          step={5}
-          value={parkBrakeAmps}
-          onValueChange={(val) => setParkBrakeAmps(val)}
-          onSlidingComplete={(val) => sendCmd(`PA ${val}`)}
-          minimumTrackTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
-          maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-          thumbTintColor={parkEnabled ? '#ef4444' : '#f43f5e'}
-        />
-        <Text style={[styles.gearShiftDesc, { marginTop: 2, fontSize: 11 }]}>
-          Counter-torque braking strength when motion is detected (5–120A). Increase to lock wheels firmly against pushing.
-        </Text>
-      </View>
+      )}
     </View>
   );
 
   const renderUnlockCard = () => (
     <View style={styles.gearShiftCard}>
-      <View style={styles.gearShiftRow}>
+      <TouchableOpacity
+        style={styles.cardHeaderCollapseRow}
+        onPress={() => toggleSection('unlock')}
+        activeOpacity={0.7}
+      >
         <View style={styles.gearShiftTextCol}>
           <View style={styles.gearShiftTitleRow}>
             <Text style={styles.gearShiftTitle}>🔓 SCOOTER UNLOCK</Text>
@@ -2369,20 +2458,33 @@ export default function App() {
               </Text>
             </View>
           </View>
-          <Text style={styles.gearShiftDesc}>
+          <Text style={styles.gearShiftDesc} numberOfLines={openSections.unlock ? undefined : 1}>
             {unlockEnabled
               ? 'Handlebar: 2→25 km/h, 3→Unlimited. Zero-start active (kick disabled). Gear 1 locks scooter. Auto-locks on disconnect.'
               : 'Handlebar: 1→5 km/h, 2→15 km/h, 3→20 km/h. Kick-start active. Shift to Gear 2 or 3 to unlock.'}
           </Text>
         </View>
-        <Switch
-          value={unlockEnabled}
-          onValueChange={toggleUnlock}
-          trackColor={{ false: '#1e293b', true: '#00f2fe' }}
-          thumbColor={unlockEnabled ? '#ffffff' : '#64748b'}
-          ios_backgroundColor="#1e293b"
-        />
-      </View>
+        <Text style={styles.sectionToggleIcon}>{openSections.unlock ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {openSections.unlock && (
+        <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[styles.gearShiftDesc, { flex: 1, marginRight: 10 }]}>
+              {unlockEnabled
+                ? 'Handlebar: 2→25 km/h, 3→Unlimited. Zero-start active (kick disabled). Gear 1 locks scooter. Auto-locks on disconnect.'
+                : 'Handlebar: 1→5 km/h, 2→15 km/h, 3→20 km/h. Kick-start active. Shift to Gear 2 or 3 to unlock.'}
+            </Text>
+            <Switch
+              value={unlockEnabled}
+              onValueChange={toggleUnlock}
+              trackColor={{ false: '#1e293b', true: '#00f2fe' }}
+              thumbColor={unlockEnabled ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
+            />
+          </View>
+        </View>
+      )}
     </View>
   );
 
@@ -2390,7 +2492,11 @@ export default function App() {
 
   const renderCruiseCard = () => (
     <View style={[styles.gearShiftCard, cruiseActive && styles.cruiseCardActive]}>
-      <View style={styles.gearShiftRow}>
+      <TouchableOpacity
+        style={styles.cardHeaderCollapseRow}
+        onPress={() => toggleSection('cruise')}
+        activeOpacity={0.7}
+      >
         <View style={styles.gearShiftTextCol}>
           <View style={styles.gearShiftTitleRow}>
             <Text style={styles.gearShiftTitle}>🎯 CRUISE CONTROL</Text>
@@ -2424,7 +2530,7 @@ export default function App() {
               </Text>
             </View>
           </View>
-          <Text style={styles.gearShiftDesc}>
+          <Text style={styles.gearShiftDesc} numberOfLines={openSections.cruise ? undefined : 1}>
             {cruiseStatus === 'ACTIVE'
               ? 'Holding top speed! Throttle inactive. Pull brake to cancel.'
               : cruiseStatus === 'G4'
@@ -2434,142 +2540,184 @@ export default function App() {
               : 'Locks maximum speed for current gear after 5 seconds at top speed. Stops on brake.'}
           </Text>
         </View>
-        <Switch
-          value={cruiseEnabled}
-          onValueChange={toggleCruiseControl}
-          trackColor={{ false: '#1e293b', true: cruiseActive ? '#10b981' : '#00f2fe' }}
-          thumbColor={cruiseEnabled ? '#ffffff' : '#64748b'}
-          ios_backgroundColor="#1e293b"
-        />
-      </View>
+        <Text style={styles.sectionToggleIcon}>{openSections.cruise ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
+
+      {openSections.cruise && (
+        <View style={{ marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 10 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <Text style={[styles.gearShiftDesc, { flex: 1, marginRight: 10 }]}>
+              {cruiseStatus === 'ACTIVE'
+                ? 'Holding top speed! Throttle inactive. Pull brake to cancel.'
+                : cruiseStatus === 'G4'
+                ? 'Cruise disabled in 4th gear (Sport). Auto-restores in Gears 1–3.'
+                : cruiseStatus === 'ARMED'
+                ? `Hold top speed (${activeGear === 1 ? '5' : activeGear === 2 ? (unlockEnabled ? '25' : '15') : (unlockEnabled ? 'Sport' : '20')} km/h ±2) for 5s to engage.`
+                : 'Locks maximum speed for current gear after 5 seconds at top speed. Stops on brake.'}
+            </Text>
+            <Switch
+              value={cruiseEnabled}
+              onValueChange={toggleCruiseControl}
+              trackColor={{ false: '#1e293b', true: cruiseActive ? '#10b981' : '#00f2fe' }}
+              thumbColor={cruiseEnabled ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
+            />
+          </View>
+        </View>
+      )}
     </View>
   );
 
   const renderBrakeCard = () => (
     <View style={styles.controlsCard}>
-      {/* 1. Physical E-Brake Sensor Switch */}
-      <View style={styles.brakeSwitchRow}>
-        <View style={styles.brakeSwitchTextCol}>
-          <View style={styles.brakeSwitchTitleRow}>
-            <Text style={styles.controlLabel}>E-Brake Sensor</Text>
+      <TouchableOpacity
+        style={styles.cardHeaderCollapseRow}
+        onPress={() => toggleSection('brake')}
+        activeOpacity={0.7}
+      >
+        <View style={styles.gearShiftTextCol}>
+          <View style={styles.gearShiftTitleRow}>
+            <Text style={styles.gearShiftTitle}>🛑 E-BRAKE & ABS CONTROL</Text>
             <View style={[styles.brakeBadge, brakeEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
               <Text style={[styles.brakeBadgeText, brakeEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
-                {brakeEnabled ? 'ACTIVE (GPIO 19)' : 'DISABLED'}
+                {brakeAmps.toFixed(0)}A • {absEnabled ? `ABS (${absFreq}Hz)` : 'ABS OFF'}
               </Text>
             </View>
           </View>
-          <Text style={styles.gearShiftDesc}>
-            {brakeEnabled
-              ? 'Physical brake lever active with 20ms glitch filter'
-              : 'Brake sensor disabled in firmware (software bypass)'}
+          <Text style={styles.gearShiftDesc} numberOfLines={openSections.brake ? undefined : 1}>
+            Physical lever sensor, Dualtron pulsation ABS & regenerative current
           </Text>
         </View>
-        <Switch
-          value={brakeEnabled}
-          onValueChange={toggleBrakeSensor}
-          trackColor={{ false: '#1e293b', true: '#f43f5e' }}
-          thumbColor={brakeEnabled ? '#ffffff' : '#64748b'}
-          ios_backgroundColor="#1e293b"
-        />
-      </View>
+        <Text style={styles.sectionToggleIcon}>{openSections.brake ? '▲' : '▼'}</Text>
+      </TouchableOpacity>
 
-      {/* 2. Dualtron e-ABS Pulsation Switch */}
-      <View style={styles.brakeSwitchRow}>
-        <View style={styles.brakeSwitchTextCol}>
-          <View style={styles.brakeSwitchTitleRow}>
-            <Text style={styles.controlLabel}>e-ABS Pulsation</Text>
-            <View style={[styles.brakeBadge, absEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
-              <Text style={[styles.brakeBadgeText, absEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
-                {absEnabled ? `DUALTRON (${absFreq} Hz)` : 'OFF (SOLID)'}
-              </Text>
-            </View>
-          </View>
-          <Text style={styles.gearShiftDesc}>
-            {absEnabled
-              ? `Anti-lock pulsation (${absFreq} Hz) active above 3 km/h to prevent wheel lockup`
-              : 'Continuous solid regenerative braking without pulsation'}
-          </Text>
-        </View>
-        <Switch
-          value={absEnabled}
-          onValueChange={toggleAbs}
-          trackColor={{ false: '#1e293b', true: '#f43f5e' }}
-          thumbColor={absEnabled ? '#ffffff' : '#64748b'}
-          ios_backgroundColor="#1e293b"
-        />
-      </View>
-
-      {/* 3. e-ABS Strobe Light & Frequency Options */}
-      {absEnabled && (
-        <>
+      {openSections.brake && (
+        <View style={{ gap: 10, marginTop: 4 }}>
+          {/* 1. Physical E-Brake Sensor Switch */}
           <View style={styles.brakeSwitchRow}>
             <View style={styles.brakeSwitchTextCol}>
               <View style={styles.brakeSwitchTitleRow}>
-                <Text style={styles.controlLabel}>Rear Strobe Light</Text>
-                <View style={[styles.brakeBadge, absStrobe ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
-                  <Text style={[styles.brakeBadgeText, absStrobe ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
-                    {absStrobe ? 'STROBE ON' : 'SOLID ON'}
+                <Text style={styles.controlLabel}>E-Brake Sensor</Text>
+                <View style={[styles.brakeBadge, brakeEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+                  <Text style={[styles.brakeBadgeText, brakeEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                    {brakeEnabled ? 'ACTIVE (GPIO 19)' : 'DISABLED'}
                   </Text>
                 </View>
               </View>
               <Text style={styles.gearShiftDesc}>
-                {absStrobe
-                  ? 'Flashes rear brake light in real time with ABS motor pulses'
-                  : 'Keeps rear brake light solid during ABS braking'}
+                {brakeEnabled
+                  ? 'Physical brake lever active with 20ms glitch filter'
+                  : 'Brake sensor disabled in firmware (software bypass)'}
               </Text>
             </View>
             <Switch
-              value={absStrobe}
-              onValueChange={toggleAbsStrobe}
+              value={brakeEnabled}
+              onValueChange={toggleBrakeSensor}
               trackColor={{ false: '#1e293b', true: '#f43f5e' }}
-              thumbColor={absStrobe ? '#ffffff' : '#64748b'}
+              thumbColor={brakeEnabled ? '#ffffff' : '#64748b'}
               ios_backgroundColor="#1e293b"
             />
           </View>
 
-          <View style={styles.sliderHeader}>
-            <Text style={styles.controlLabel}>ABS Frequency</Text>
-            <Text style={styles.sliderVal}>{absFreq} Hz</Text>
+          {/* 2. Dualtron e-ABS Pulsation Switch */}
+          <View style={styles.brakeSwitchRow}>
+            <View style={styles.brakeSwitchTextCol}>
+              <View style={styles.brakeSwitchTitleRow}>
+                <Text style={styles.controlLabel}>e-ABS Pulsation</Text>
+                <View style={[styles.brakeBadge, absEnabled ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+                  <Text style={[styles.brakeBadgeText, absEnabled ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                    {absEnabled ? `DUALTRON (${absFreq} Hz)` : 'OFF (SOLID)'}
+                  </Text>
+                </View>
+              </View>
+              <Text style={styles.gearShiftDesc}>
+                {absEnabled
+                  ? `Anti-lock pulsation (${absFreq} Hz) active above 3 km/h to prevent wheel lockup`
+                  : 'Continuous solid regenerative braking without pulsation'}
+              </Text>
+            </View>
+            <Switch
+              value={absEnabled}
+              onValueChange={toggleAbs}
+              trackColor={{ false: '#1e293b', true: '#f43f5e' }}
+              thumbColor={absEnabled ? '#ffffff' : '#64748b'}
+              ios_backgroundColor="#1e293b"
+            />
           </View>
+
+          {/* 3. e-ABS Strobe Light & Frequency Options */}
+          {absEnabled && (
+            <>
+              <View style={styles.brakeSwitchRow}>
+                <View style={styles.brakeSwitchTextCol}>
+                  <View style={styles.brakeSwitchTitleRow}>
+                    <Text style={styles.controlLabel}>Rear Strobe Light</Text>
+                    <View style={[styles.brakeBadge, absStrobe ? styles.brakeBadgeOn : styles.brakeBadgeOff]}>
+                      <Text style={[styles.brakeBadgeText, absStrobe ? styles.brakeBadgeTextOn : styles.brakeBadgeTextOff]}>
+                        {absStrobe ? 'STROBE ON' : 'SOLID ON'}
+                      </Text>
+                    </View>
+                  </View>
+                  <Text style={styles.gearShiftDesc}>
+                    {absStrobe
+                      ? 'Flashes rear brake light in real time with ABS motor pulses'
+                      : 'Keeps rear brake light solid during ABS braking'}
+                  </Text>
+                </View>
+                <Switch
+                  value={absStrobe}
+                  onValueChange={toggleAbsStrobe}
+                  trackColor={{ false: '#1e293b', true: '#f43f5e' }}
+                  thumbColor={absStrobe ? '#ffffff' : '#64748b'}
+                  ios_backgroundColor="#1e293b"
+                />
+              </View>
+
+              <View style={styles.sliderHeader}>
+                <Text style={styles.controlLabel}>ABS Frequency</Text>
+                <Text style={styles.sliderVal}>{absFreq} Hz</Text>
+              </View>
+              <Slider
+                style={styles.slider}
+                minimumValue={2}
+                maximumValue={20}
+                step={1}
+                value={absFreq}
+                onValueChange={handleAbsFreqChange}
+                onSlidingComplete={handleAbsFreqComplete}
+                minimumTrackTintColor="#f43f5e"
+                maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+                thumbTintColor="#f43f5e"
+              />
+            </>
+          )}
+
+          {/* 4. E-Brake Strength Slider */}
+          <View style={styles.sliderHeader}>
+            <Text style={styles.controlLabel}>E-Brake Strength</Text>
+            <Text style={styles.sliderVal}>{brakeAmps.toFixed(1)} A</Text>
+          </View>
+
           <Slider
             style={styles.slider}
-            minimumValue={2}
-            maximumValue={20}
+            minimumValue={0}
+            maximumValue={60}
             step={1}
-            value={absFreq}
-            onValueChange={handleAbsFreqChange}
-            onSlidingComplete={handleAbsFreqComplete}
+            value={brakeAmps}
+            onValueChange={(val) => setBrakeAmps(val)}
+            onSlidingComplete={(val) => sendCmd(`BC ${val}`)}
             minimumTrackTintColor="#f43f5e"
             maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
             thumbTintColor="#f43f5e"
           />
-        </>
+
+          <View style={styles.btnRow}>
+            <TouchableOpacity style={styles.btnAction} onPress={() => sendCmd('S')} activeOpacity={0.7}>
+              <Text style={styles.btnActionText}>📡 Refresh Telemetry (S)</Text>
+            </TouchableOpacity>
+          </View>
+        </View>
       )}
-
-      {/* 4. E-Brake Strength Slider */}
-      <View style={styles.sliderHeader}>
-        <Text style={styles.controlLabel}>E-Brake Strength</Text>
-        <Text style={styles.sliderVal}>{brakeAmps.toFixed(1)} A</Text>
-      </View>
-
-      <Slider
-        style={styles.slider}
-        minimumValue={0}
-        maximumValue={60}
-        step={1}
-        value={brakeAmps}
-        onValueChange={(val) => setBrakeAmps(val)}
-        onSlidingComplete={(val) => sendCmd(`BC ${val}`)}
-        minimumTrackTintColor="#f43f5e"
-        maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
-        thumbTintColor="#f43f5e"
-      />
-
-      <View style={styles.btnRow}>
-        <TouchableOpacity style={styles.btnAction} onPress={() => sendCmd('S')} activeOpacity={0.7}>
-          <Text style={styles.btnActionText}>📡 Refresh Telemetry (S)</Text>
-        </TouchableOpacity>
-      </View>
     </View>
   );
 
@@ -2706,9 +2854,13 @@ export default function App() {
     return (
       <View style={styles.lightsCard}>
         {/* Card Header */}
-        <View style={styles.lightsHeaderRow}>
+        <TouchableOpacity
+          style={styles.lightsHeaderRow}
+          onPress={() => toggleSection('lights')}
+          activeOpacity={0.7}
+        >
           <View style={styles.lightsHeaderLeft}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
               <Text style={styles.lightsTitle}>💡 LIGHTS & INDICATORS</Text>
               <View
                 style={[
@@ -2749,10 +2901,14 @@ export default function App() {
               </View>
             </View>
             <Text style={styles.lightsSubDesc}>
-              Hardware MOSFET/relay outputs synchronized with handlebar switches
+              Hardware MOSFET/relay outputs & dual motor switch
             </Text>
           </View>
-        </View>
+          <Text style={styles.sectionToggleIcon}>{openSections.lights ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+
+        {openSections.lights && (
+          <View style={{ gap: 10, marginTop: 4 }}>
 
         {/* Primary Lights 2-Column Grid */}
         <View style={styles.lightsGrid}>
@@ -2984,21 +3140,21 @@ export default function App() {
             >
               <Text style={styles.ddmIcon}>{ddmActive ? '⚡' : '🛴'}</Text>
             </View>
-            <View style={{ flex: 1 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-                <Text style={styles.ddmTitle}>
-                  {ddmActive ? 'DUAL MOTOR (2WD)' : 'SINGLE MOTOR (1WD)'}
-                </Text>
-                <Text style={styles.ddmHardwareTag}>GPIO 4 / BLE</Text>
-              </View>
-              <Text style={styles.ddmDesc} numberOfLines={1}>
-                {ddmActive
-                  ? 'Both motors engaged • Max torque & power'
-                  : 'Master motor only • Extended battery range'}
+            <View style={{ flex: 1, minWidth: 0, justifyContent: 'center' }}>
+              <Text style={styles.ddmTitle} numberOfLines={1}>
+                {ddmActive ? 'DUAL MOTOR (2WD)' : 'SINGLE MOTOR (1WD)'}
               </Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, marginTop: 3 }}>
+                <Text style={styles.ddmHardwareTag}>GPIO 4</Text>
+                <Text style={[styles.ddmDesc, { marginTop: 0, flex: 1 }]} numberOfLines={1}>
+                  {ddmActive
+                    ? 'Both motors engaged • Max torque'
+                    : 'Master motor only • Range mode'}
+                </Text>
+              </View>
             </View>
           </View>
-          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+          <View style={styles.ddmRightGroup}>
             <View
               style={[
                 styles.ddmBadge,
@@ -3023,6 +3179,8 @@ export default function App() {
             />
           </View>
         </TouchableOpacity>
+        </View>
+        )}
       </View>
     );
   };
@@ -3035,13 +3193,13 @@ export default function App() {
       <View style={[
         styles.header,
         isLandscape && styles.headerLandscape,
-        { paddingLeft: islandInsetLeft, paddingRight: islandInsetRight }
+        { paddingLeft: Math.max(islandInsetLeft, 12), paddingRight: Math.max(islandInsetRight, 12) }
       ]}>
         <View style={styles.brandRow}>
           <View style={styles.brandDot} />
-          <View>
-            <Text style={styles.brandTitle}>SCOOTER BLE</Text>
-            <Text style={styles.subStatus}>{statusText}</Text>
+          <View style={styles.brandTextCol}>
+            <Text style={styles.brandTitle} numberOfLines={1}>SCOOTER BLE</Text>
+            <Text style={styles.subStatus} numberOfLines={1} ellipsizeMode="tail">{statusText}</Text>
           </View>
         </View>
 
@@ -3095,8 +3253,9 @@ export default function App() {
                 styles.btnHeaderPowerText,
                 isAntisparkConnected && styles.btnHeaderPowerTextActive,
               ]}
+              numberOfLines={1}
             >
-              {isAntisparkConnected ? '⚡ Power ON' : isAntisparkConnecting ? 'Connecting...' : '⚡ Power'}
+              {isAntisparkConnected ? '⚡ Power ON' : isAntisparkConnecting ? 'Power...' : '⚡ Power'}
             </Text>
           </TouchableOpacity>
 
@@ -3104,11 +3263,20 @@ export default function App() {
           <TouchableOpacity
             style={[styles.btnConnect, isConnected && styles.btnConnected]}
             onPress={isConnected ? disconnect : connectBle}
-            disabled={isScanning || isMainConnecting}
+            disabled={!isConnected && (isScanning || isMainConnecting)}
             activeOpacity={0.8}
           >
-            <View style={[styles.statusDot, isConnected && styles.statusDotActive]} />
-            <Text style={[styles.btnConnectText, isConnected && styles.btnConnectedText]}>
+            <View
+              style={[
+                styles.statusDot,
+                isConnected
+                  ? styles.statusDotActive
+                  : (isScanning || isMainConnecting)
+                  ? styles.statusDotYellow
+                  : styles.statusDotInactive,
+              ]}
+            />
+            <Text style={[styles.btnConnectText, isConnected && styles.btnConnectedText]} numberOfLines={1}>
               {isConnected ? 'Connected' : (isScanning || isMainConnecting) ? 'Connecting...' : 'Connect'}
             </Text>
           </TouchableOpacity>
@@ -3151,8 +3319,19 @@ export default function App() {
                 showsVerticalScrollIndicator={true}
               >
                 <View style={styles.settingsHeader}>
-                  <Text style={styles.sectionTitle}>SCOOTER SETTINGS</Text>
-                  <Text style={styles.activeProfileLabel}>Configuration & Tuning</Text>
+                  <View>
+                    <Text style={styles.sectionTitle}>SCOOTER SETTINGS</Text>
+                    <Text style={styles.activeProfileLabel}>Tap any section to configure</Text>
+                  </View>
+                  <TouchableOpacity
+                    style={styles.btnExpandAll}
+                    onPress={toggleAllSections}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={styles.btnExpandAllText}>
+                      {Object.values(openSections).every(Boolean) ? 'Collapse All' : 'Expand All'}
+                    </Text>
+                  </TouchableOpacity>
                 </View>
                 {renderLightsCard()}
                 {renderAntisparkCard()}
@@ -3197,13 +3376,28 @@ export default function App() {
           showsVerticalScrollIndicator={false}
         >
           {renderSpeedometer()}
+          {renderProfiles(false)}
           {renderTelemetry(false)}
+          <View style={styles.settingsHeaderPortrait}>
+            <View>
+              <Text style={styles.sectionTitle}>SCOOTER SETTINGS</Text>
+              <Text style={styles.activeProfileLabel}>Tap any section to configure</Text>
+            </View>
+            <TouchableOpacity
+              style={styles.btnExpandAll}
+              onPress={toggleAllSections}
+              activeOpacity={0.7}
+            >
+              <Text style={styles.btnExpandAllText}>
+                {Object.values(openSections).every(Boolean) ? 'Collapse All' : 'Expand All'}
+              </Text>
+            </TouchableOpacity>
+          </View>
           {renderLightsCard()}
           {renderAntisparkCard()}
           {renderParkCard()}
           {renderGearShiftCard()}
           {renderCruiseCard()}
-          {renderProfiles(false)}
           {renderBrakeCard()}
           {renderConsoleCard()}
         </ScrollView>
@@ -3224,7 +3418,7 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 12,
     paddingVertical: 10,
     backgroundColor: '#101626',
     borderBottomWidth: 1,
@@ -3236,7 +3430,14 @@ const styles = StyleSheet.create({
   brandRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 10,
+    gap: 8,
+    flex: 1,
+    minWidth: 0,
+    marginRight: 8,
+  },
+  brandTextCol: {
+    flex: 1,
+    minWidth: 0,
   },
   brandDot: {
     width: 14,
@@ -3246,24 +3447,24 @@ const styles = StyleSheet.create({
   },
   brandTitle: {
     color: '#ffffff',
-    fontSize: 15,
+    fontSize: 14,
     fontWeight: '800',
     letterSpacing: 0.5,
   },
   subStatus: {
     color: '#94a3b8',
-    fontSize: 11,
+    fontSize: 10.5,
   },
   btnConnect: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     backgroundColor: 'rgba(0, 242, 254, 0.12)',
     borderWidth: 1,
     borderColor: 'rgba(0, 242, 254, 0.35)',
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
   },
   btnConnected: {
     backgroundColor: 'rgba(16, 185, 129, 0.16)',
@@ -3271,7 +3472,7 @@ const styles = StyleSheet.create({
   },
   btnConnectText: {
     color: '#00f2fe',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
   },
   btnConnectedText: {
@@ -3280,18 +3481,19 @@ const styles = StyleSheet.create({
   headerRightGroup: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 8,
+    gap: 6,
+    flexShrink: 0,
   },
   btnHeaderPower: {
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 6,
+    gap: 5,
     backgroundColor: 'rgba(255, 255, 255, 0.06)',
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.15)',
-    paddingHorizontal: 12,
-    paddingVertical: 8,
-    borderRadius: 12,
+    paddingHorizontal: 9,
+    paddingVertical: 7,
+    borderRadius: 10,
   },
   btnHeaderPowerActive: {
     backgroundColor: 'rgba(16, 185, 129, 0.18)',
@@ -3303,7 +3505,7 @@ const styles = StyleSheet.create({
   },
   btnHeaderPowerText: {
     color: '#94a3b8',
-    fontSize: 12,
+    fontSize: 11.5,
     fontWeight: '700',
   },
   btnHeaderPowerTextActive: {
@@ -3469,6 +3671,27 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 4,
+  },
+  settingsHeaderPortrait: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: 14,
+    marginBottom: 4,
+    paddingHorizontal: 2,
+  },
+  btnExpandAll: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 8,
+    backgroundColor: 'rgba(0, 242, 254, 0.1)',
+    borderWidth: 1,
+    borderColor: 'rgba(0, 242, 254, 0.3)',
+  },
+  btnExpandAllText: {
+    color: '#00f2fe',
+    fontSize: 11,
+    fontWeight: '700',
   },
 
   // Landscape Footer Bar
@@ -3691,6 +3914,18 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: 10,
+  },
+  cardHeaderCollapseRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
+  },
+  sectionToggleIcon: {
+    color: '#00f2fe',
+    fontSize: 13,
+    fontWeight: '700',
+    paddingLeft: 6,
   },
   gearShiftTextCol: {
     flex: 1,
@@ -4624,10 +4859,14 @@ const styles = StyleSheet.create({
     elevation: 4,
   },
   lightsHeaderRow: {
-    marginBottom: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: 8,
   },
   lightsHeaderLeft: {
     flex: 1,
+    minWidth: 0,
   },
   lightsTitle: {
     color: '#ffffff',
@@ -4915,8 +5154,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: 'rgba(255, 255, 255, 0.08)',
     borderRadius: 14,
-    paddingVertical: 12,
-    paddingHorizontal: 14,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
   },
   ddmFooterRowDual: {
     backgroundColor: 'rgba(0, 242, 254, 0.06)',
@@ -4928,9 +5167,17 @@ const styles = StyleSheet.create({
   },
   ddmFooterLeft: {
     flex: 1,
+    minWidth: 0,
     flexDirection: 'row',
     alignItems: 'center',
-    gap: 12,
+    gap: 10,
+    marginRight: 8,
+  },
+  ddmRightGroup: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    flexShrink: 0,
   },
   ddmIconCircle: {
     width: 38,
