@@ -632,7 +632,13 @@ void sendDisplayTxPacket(float speedMps) {
   displayTxCounter++;
   txBuf[1] = displayTxCounter;
 
-  // Byte 4: S-Mode flag (bit 5 = 32) + optional gear override (bits 0..1 = 1..3)
+  // Byte 4:
+  //   Bit 7 (0x80 = 128): ESP32 BLE app connected (Bluetooth icon on display)
+  //   Bit 5 (0x20 = 32):  S-Mode flag (unlocked Sport mode)
+  //   Bits 0..1 (0x03):   Optional gear override (1..3)
+  if (bleClientConnected) {
+    txBuf[4] |= 0x80;
+  }
   if (profileSSwitch) {
     txBuf[4] |= 32;
   }

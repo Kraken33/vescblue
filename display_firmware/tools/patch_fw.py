@@ -38,6 +38,12 @@ GEAR_CTRL = [
      bytes.fromhex("0848027903231a4009d0074b1a700022064b1a80064b1a88202002431a800148704700bf68020020f4000020e2010020ae010020"),
      "gear_hook at 0x08006400: if (rxBuf[4] & 3) != 0 -> *(0x200000f4) = gear, reset idle timer"),
 ]
+BT_ICON = [
+    ("bt-icon-branch", 0x634A, bytes.fromhex("022803d07648"), bytes.fromhex("012803d008e0"),
+     "show solid BT icon when *(0x20000109)==1 (rxBuf[4] & 0x80), hide when 0"),
+    ("bt-icon-ptr", 0x6538, bytes.fromhex("a601"), bytes.fromhex("0901"),
+     "point BT icon check at 0x20000109 (set by rxBuf[4] & 0x80) instead of inner BLE 0x200001a6"),
+]
 PMENU = [
     ("pmenu-skip", 0x3506, b"\x1C\x48", b"\x70\x47", "bx lr: no hidden P-entries, P01..P23 continuous"),
     ("pmenu-wrap", 0x3502, b"\x03\x20", b"\x01\x20", "after P23 wrap to P01 instead of P03"),
@@ -73,6 +79,7 @@ def main():
     ap.add_argument("-o", "--out", required=True)
     ap.add_argument("--no-speed", action="store_true", help="skip the speed clamp bypass")
     ap.add_argument("--no-gear", action="store_true", help="skip the UART gear control hook")
+    ap.add_argument("--no-bt", action="store_true", help="skip the UART Bluetooth icon patch")
     ap.add_argument("--no-pmenu", action="store_true", help="skip the 3 P-menu patches")
     ap.add_argument("--nvram-profile", default="0",
                     help="0/open (default), 1/eu, 2/abe, 3, or 'none' to leave NVRAM untouched")
@@ -97,7 +104,7 @@ def main():
                      "(re-run with --force-sites only if you know what you are doing).")
 
     orig_img = bytes(img)
-    patches = ([] if a.no_speed else SPEED) + ([] if a.no_gear else GEAR_CTRL) + ([] if a.no_pmenu else PMENU)
+    patches = ([] if a.no_speed else SPEED) + ([] if a.no_gear else GEAR_CTRL) + ([] if a.no_bt else BT_ICON) + ([] if a.no_pmenu else PMENU)
     for name, off, before, after, desc in patches:
         plen = len(before)
         cur = bytes(img[off:off + plen])
