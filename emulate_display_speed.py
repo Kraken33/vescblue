@@ -68,7 +68,8 @@ def calculate_display_speed(speed_kmh: float, wheel_inch: float = DEFAULT_WHEEL_
     return max(0, min(65535, int(round(disp_speed))))
 
 
-def build_tx_packet(counter: int, disp_speed: int, sport_mode: bool = True) -> bytes:
+def build_tx_packet(counter: int, disp_speed: int, sport_mode: bool = True,
+                    target_gear: int = 0) -> bytes:
     """Construct and encrypt a 15-byte display packet (vescblue.ino sendDisplayTxPacket)."""
     buf = bytearray(15)
 
@@ -78,9 +79,11 @@ def build_tx_packet(counter: int, disp_speed: int, sport_mode: bool = True) -> b
     # Byte 1: Rolling counter
     buf[1] = counter & 0xFF
 
-    # Byte 4: S-Mode flag (32 if unlocked/Sport)
+    # Byte 4: S-Mode flag (bit 5 = 32) + optional gear override (bits 0..1 = 1..3)
     if sport_mode:
-        buf[4] = 32
+        buf[4] |= 32
+    if 1 <= target_gear <= 3:
+        buf[4] |= (target_gear & 0x03)
 
     # Bytes 7 & 8: Speed in Big Endian
     buf[7] = (disp_speed >> 8) & 0xFF

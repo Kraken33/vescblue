@@ -164,6 +164,8 @@ unsigned long lastDisplayTxTime = 0;
 
 int currentGear = 1;
 int lastRawGear = 0;
+uint8_t displayTargetGear = 0;
+uint8_t displayGearSyncRemaining = 0;
 bool displayLightState = false;
 bool lastLightState = false;
 bool profileSSwitch = false;
@@ -499,8 +501,14 @@ void updateActiveProfile() {
   sendVescTempProfile(activeProfile.maxErpm, 1.0f);
 }
 
-void setGear(int newGear) {
+void setGear(int newGear, bool syncToDisplay = true) {
   currentGear = constrain(newGear, 1, 3);
+
+  if (syncToDisplay) {
+    displayTargetGear = (uint8_t)currentGear;
+    displayGearSyncRemaining = 8;
+    lastRawGear = currentGear * 5;
+  }
 
   // Shift gear history
   for (int i = 0; i < 6; i++) {
@@ -557,9 +565,7 @@ int calculateMappedGear(int raw) {
 }
 
 void applyUnlockState() {
-  int raw = (lastRawGear > 0) ? lastRawGear : currentGear;
-  int newGear = calculateMappedGear(raw);
-  setGear(newGear);
+  setGear(currentGear, false);
 }
 
 void applyGearShiftState() {
@@ -572,9 +578,15 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   bool light = (packet[9] & 0x08) != 0;
 
   // Handle Gear change
-  if (rawGear != lastRawGear) {
+  if (displayGearSyncRemaining > 0) {
+    if (rawGear == displayTargetGear * 5 || rawGear == displayTargetGear) {
+      displayGearSyncRemaining = 0;
+      displayTargetGear = 0;
+      lastRawGear = rawGear;
+    }
+  } else if (rawGear != lastRawGear) {
     int mappedGear = calculateMappedGear(rawGear);
-    setGear(mappedGear);
+    setGear(mappedGear, false);
     lastRawGear = rawGear;
   }
 
@@ -588,7 +600,7 @@ void handleDisplayRxPacket(const uint8_t *packet) {
       secretComboUnlocked = true;
       unlockEnabled = true;
       gearShiftEnabled = true;
-      setGear(3);
+      setGear(3, true);
       blePushLine("SECRET UNLOCK: Sport Unlimited activated! UL=1 G=3");
     }
 
@@ -620,9 +632,17 @@ void sendDisplayTxPacket(float speedMps) {
   displayTxCounter++;
   txBuf[1] = displayTxCounter;
 
-  // Byte 4: S-Mode flag (32 if unlocked)
+  // Byte 4: S-Mode flag (bit 5 = 32) + optional gear override (bits 0..1 = 1..3)
   if (profileSSwitch) {
-    txBuf[4] = 32;
+    txBuf[4] |= 32;
+  }
+  if (displayGearSyncRemaining > 0 && displayTargetGear >= 1 &&
+      displayTargetGear <= 3) {
+    txBuf[4] |= (displayTargetGear & 0x03);
+    displayGearSyncRemaining--;
+    if (displayGearSyncRemaining == 0) {
+      displayTargetGear = 0;
+    }
   }
 
   // Bytes 7 & 8: Speed in Big Endian
