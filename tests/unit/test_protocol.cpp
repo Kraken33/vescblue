@@ -155,6 +155,67 @@ int main() {
     assert(currentGear == 1);
     std::cout << "[PASS] Park Security Interlock: Physical gear shift accepted after phone reconnected." << std::endl;
 
+    // Test 8: Unlocked Drive Profiles (CFGP) Configuration & Safety Validation
+    const float ERPM_TO_KMH_TEST = 0.003191858f;
+    struct TestProfile {
+        float speedLimitKmH;
+        float maxErpm;
+        float maxCurrentAmps;
+    };
+    TestProfile prof2 = {25.0f, 25.0f / ERPM_TO_KMH_TEST, 65.0f};
+    TestProfile prof3 = {0.0f, 100000.0f, 120.0f};
+
+    // Helper simulating CFGP validation logic
+    auto applyCfgp = [&](int gear, float spd, float curr) -> bool {
+        if (gear != 2 && gear != 3) return false; // Gear 1 is strictly protected
+        if (gear == 2) {
+            if (spd < 15.0f || spd > 40.0f) return false;
+            if (curr < 20.0f || curr > 100.0f) return false;
+            prof2.speedLimitKmH = spd;
+            prof2.maxErpm = spd / ERPM_TO_KMH_TEST;
+            prof2.maxCurrentAmps = curr;
+            return true;
+        } else {
+            if (spd < 0.0f || (spd > 0.0f && spd < 20.0f) || spd > 60.0f) return false;
+            if (curr < 20.0f || curr > 120.0f) return false;
+            prof3.speedLimitKmH = spd;
+            prof3.maxErpm = (spd == 0.0f) ? 100000.0f : (spd / ERPM_TO_KMH_TEST);
+            prof3.maxCurrentAmps = curr;
+            return true;
+        }
+    };
+
+    // 1. Gear 1 modification MUST be rejected
+    assert(applyCfgp(1, 10.0f, 30.0f) == false);
+    std::cout << "[PASS] CFGP Safety: Configuration for Gear 1 correctly rejected." << std::endl;
+
+    // 2. Out-of-bounds Gear 2 and Gear 3 values rejected
+    assert(applyCfgp(2, 10.0f, 50.0f) == false);  // speed < 15
+    assert(applyCfgp(2, 45.0f, 50.0f) == false);  // speed > 40
+    assert(applyCfgp(2, 25.0f, 110.0f) == false); // current > 100
+    assert(applyCfgp(3, 10.0f, 80.0f) == false);  // 0 < speed < 20
+    assert(applyCfgp(3, 70.0f, 80.0f) == false);  // speed > 60
+    assert(applyCfgp(3, 0.0f, 130.0f) == false);  // current > 120
+    std::cout << "[PASS] CFGP Safety: Out-of-bounds speed & current values correctly rejected." << std::endl;
+
+    // 3. Valid Gear 2 configuration
+    assert(applyCfgp(2, 32.0f, 75.0f) == true);
+    assert(prof2.speedLimitKmH == 32.0f);
+    assert(prof2.maxCurrentAmps == 75.0f);
+    assert(std::fabs(prof2.maxErpm - (32.0f / ERPM_TO_KMH_TEST)) < 1.0f);
+    // Throttle calculation at 50%
+    float throttleRatio = 0.5f;
+    float targetCurrent = throttleRatio * prof2.maxCurrentAmps;
+    assert(targetCurrent == 37.5f);
+    std::cout << "[PASS] CFGP: Valid Gear 2 (32 km/h, 75A) configured and throttle scaled to " << targetCurrent << "A." << std::endl;
+
+    // 4. Valid Gear 3 Unlimited configuration
+    assert(applyCfgp(3, 0.0f, 110.0f) == true);
+    assert(prof3.speedLimitKmH == 0.0f);
+    assert(prof3.maxErpm == 100000.0f);
+    assert(prof3.maxCurrentAmps == 110.0f);
+    std::cout << "[PASS] CFGP: Valid Gear 3 (Unlimited, 110A) configured." << std::endl;
+
     std::cout << "\n>>> ALL UNIT TESTS PASSED! Firmware algorithms are verified and ready. <<<" << std::endl;
     return 0;
 }

@@ -64,18 +64,18 @@ const DriveProfile PROFILE_1_LOCKED = {5.0f, 1566.0f, 25.0f, "5 km/h (Eco Lock)"
 const DriveProfile PROFILE_2_LOCKED = {15.0f, 4700.0f, 40.0f, "15 km/h (City)"};
 const DriveProfile PROFILE_3_LOCKED = {20.0f, 6266.0f, 65.0f, "20 km/h (Legal Drive)"};
 
-// Unlocked Profiles (Unlock Enabled: 25 km/h, Unlimited)
-const DriveProfile PROFILE_2_UNLOCKED = {25.0f, 7832.0f, 65.0f, "25 km/h (Drive Unlocked)"};
-const DriveProfile PROFILE_3_UNLOCKED = {40.0f, 100000.0f, 120.0f, "Unlimited (Sport)"};
+// Unlocked Profiles (Unlock Enabled: Configurable via CFGP for Gears 2 & 3)
+DriveProfile PROFILE_2_UNLOCKED = {25.0f, 7832.0f, 65.0f, "25 km/h (Drive Unlocked)"};
+DriveProfile PROFILE_3_UNLOCKED = {0.0f, 100000.0f, 120.0f, "Unlimited (Sport)"};
 
 // Backward-compatible aliases
-const DriveProfile PROFILE_1 = PROFILE_1_LOCKED;
-const DriveProfile PROFILE_2 = PROFILE_2_LOCKED;
-const DriveProfile PROFILE_3 = PROFILE_3_LOCKED;
-const DriveProfile PROFILE_3_STANDARD = PROFILE_3_LOCKED;
-const DriveProfile PROFILE_3_SHIFTED = PROFILE_2_UNLOCKED;
-const DriveProfile PROFILE_S2 = PROFILE_2_UNLOCKED;
-const DriveProfile PROFILE_S3 = PROFILE_3_UNLOCKED;
+const DriveProfile &PROFILE_1 = PROFILE_1_LOCKED;
+const DriveProfile &PROFILE_2 = PROFILE_2_LOCKED;
+const DriveProfile &PROFILE_3 = PROFILE_3_LOCKED;
+const DriveProfile &PROFILE_3_STANDARD = PROFILE_3_LOCKED;
+DriveProfile &PROFILE_3_SHIFTED = PROFILE_2_UNLOCKED;
+DriveProfile &PROFILE_S2 = PROFILE_2_UNLOCKED;
+DriveProfile &PROFILE_S3 = PROFILE_3_UNLOCKED;
 
 // Tuning & Limits (Full authority regen braking)
 float userBrakeAmps = 25.0f; // Strong default brake current in Amps
@@ -978,6 +978,57 @@ void bleHandleCommand(const String &cmd) {
     } else {
       blePushLine("ERR profile 0..3 (0=Park, 1=5km/h, 2=15/25km/h, 3=20/Unlim km/h)");
     }
+  } else if (cmd == "CFGP") {
+    char pbuf[180];
+    snprintf(pbuf, sizeof(pbuf),
+             "CFGP U2: SPD=%.1f CURR=%.1f | U3: SPD=%.1f (%s) CURR=%.1f",
+             PROFILE_2_UNLOCKED.speedLimitKmH, PROFILE_2_UNLOCKED.maxCurrentAmps,
+             PROFILE_3_UNLOCKED.speedLimitKmH,
+             (PROFILE_3_UNLOCKED.speedLimitKmH <= 0.0f || PROFILE_3_UNLOCKED.maxErpm >= 90000.0f) ? "Unlimited" : "Limited",
+             PROFILE_3_UNLOCKED.maxCurrentAmps);
+    blePushLine(String(pbuf));
+  } else if (cmd.startsWith("CFGP ")) {
+    int g = 0;
+    float spd = 0.0f;
+    float curr = 0.0f;
+    int matched = sscanf(cmd.c_str() + 5, "%d %f %f", &g, &spd, &curr);
+    if (matched < 3) {
+      blePushLine("ERR CFGP format: CFGP <gear: 2 or 3> <speed_kmh> <current_amps>");
+    } else if (g != 2 && g != 3) {
+      blePushLine("ERR CFGP only gears 2 and 3 configurable");
+    } else if (g == 2) {
+      if (spd < 15.0f || spd > 40.0f) {
+        blePushLine("ERR CFGP gear 2 speed 15..40 km/h");
+      } else if (curr < 20.0f || curr > 100.0f) {
+        blePushLine("ERR CFGP gear 2 current 20..100 A");
+      } else {
+        PROFILE_2_UNLOCKED.speedLimitKmH = spd;
+        PROFILE_2_UNLOCKED.maxErpm = spd / ERPM_TO_KMH;
+        PROFILE_2_UNLOCKED.maxCurrentAmps = curr;
+        prefs.putFloat("p2_u_spd", spd);
+        prefs.putFloat("p2_u_cur", curr);
+        updateActiveProfile();
+        char rBuf[100];
+        snprintf(rBuf, sizeof(rBuf), "CFGP U2 set: SPD=%.1f km/h CURR=%.1f A", spd, curr);
+        blePushLine(String(rBuf));
+      }
+    } else if (g == 3) {
+      if (spd < 0.0f || (spd > 0.0f && spd < 20.0f) || spd > 60.0f) {
+        blePushLine("ERR CFGP gear 3 speed 20..60 km/h (or 0=Unlimited)");
+      } else if (curr < 20.0f || curr > 120.0f) {
+        blePushLine("ERR CFGP gear 3 current 20..120 A");
+      } else {
+        PROFILE_3_UNLOCKED.speedLimitKmH = spd;
+        PROFILE_3_UNLOCKED.maxErpm = (spd == 0.0f) ? 100000.0f : (spd / ERPM_TO_KMH);
+        PROFILE_3_UNLOCKED.maxCurrentAmps = curr;
+        prefs.putFloat("p3_u_spd", spd);
+        prefs.putFloat("p3_u_cur", curr);
+        updateActiveProfile();
+        char rBuf[100];
+        snprintf(rBuf, sizeof(rBuf), "CFGP U3 set: SPD=%.1f km/h CURR=%.1f A", spd, curr);
+        blePushLine(String(rBuf));
+      }
+    }
   } else if (cmd.startsWith("BP ")) {
     int p = cmd.substring(3).toInt();
     if (p == 19) {
@@ -1139,7 +1190,7 @@ void bleHandleCommand(const String &cmd) {
     ESP.restart();
   } else if (cmd == "?") {
     blePushLine(
-        "S status | P [0-3] prof | G [0-3] gear | PARK [0/1] park | PA [amps] park-amps | "
+        "S status | P [0-3] prof | CFGP [2/3 s c] cfg-unlocked | G [0-3] gear | PARK [0/1] park | PA [amps] park-amps | "
         "GS [0/1] shift | CC [0/1] cruise | BEN [0/1] brake-en | BC [amps] brake | "
         "ABS [0/1] e-abs | AF [2-20] abs-freq | ABSS [0/1] abs-strobe | L [0/1] light | "
         "TL turnL | TR turnR | HAZ haz | DUAL [0/1] dual | CAN [id] | T [v b e] test | "
@@ -1301,6 +1352,23 @@ void setup() {
 
   dualMotorEnabled = prefs.getBool("dual_mode", true); // Default Dual Motor (2WD)
   lastDdmRaw = digitalRead(PIN_IN_DDM);
+
+  // Load configurable unlocked drive profiles (Gears 2 and 3)
+  float u2_spd = prefs.getFloat("p2_u_spd", 25.0f);
+  if (u2_spd < 15.0f || u2_spd > 40.0f) u2_spd = 25.0f;
+  float u2_cur = prefs.getFloat("p2_u_cur", 65.0f);
+  if (u2_cur < 20.0f || u2_cur > 100.0f) u2_cur = 65.0f;
+  PROFILE_2_UNLOCKED.speedLimitKmH = u2_spd;
+  PROFILE_2_UNLOCKED.maxErpm = u2_spd / ERPM_TO_KMH;
+  PROFILE_2_UNLOCKED.maxCurrentAmps = u2_cur;
+
+  float u3_spd = prefs.getFloat("p3_u_spd", 0.0f); // 0 = unlimited
+  if (u3_spd < 0.0f || (u3_spd > 0.0f && u3_spd < 20.0f) || u3_spd > 60.0f) u3_spd = 0.0f;
+  float u3_cur = prefs.getFloat("p3_u_cur", 120.0f);
+  if (u3_cur < 20.0f || u3_cur > 120.0f) u3_cur = 120.0f;
+  PROFILE_3_UNLOCKED.speedLimitKmH = u3_spd;
+  PROFILE_3_UNLOCKED.maxErpm = (u3_spd == 0.0f) ? 100000.0f : (u3_spd / ERPM_TO_KMH);
+  PROFILE_3_UNLOCKED.maxCurrentAmps = u3_cur;
 
   bleInit();
 

@@ -106,6 +106,17 @@ export default function App() {
   const [landscapeTab, setLandscapeTab] = useState<'drive' | 'settings'>('drive');
   const pagerRef = useRef<ScrollView | null>(null);
 
+  // Configurable Unlocked Drive Profiles (Gears 2 and 3)
+  interface UnlockedProfileConfig {
+    speedLimit: number; // km/h (0 = unlimited)
+    maxCurrent: number; // Amps
+  }
+  const [unlockedProfiles, setUnlockedProfiles] = useState<{ 2: UnlockedProfileConfig; 3: UnlockedProfileConfig }>({
+    2: { speedLimit: 25, maxCurrent: 65 },
+    3: { speedLimit: 0, maxCurrent: 120 }, // 0 = unlimited
+  });
+  const [selectedUnlockedGear, setSelectedUnlockedGear] = useState<2 | 3>(2);
+
   // Lights & Indicators State
   const [frontLightOn, setFrontLightOn] = useState(false);
   const [turnLeftOn, setTurnLeftOn] = useState(false);
@@ -193,6 +204,7 @@ export default function App() {
     antispark: false,
     park: false,
     unlock: false,
+    profiles: false,
     cruise: false,
     brake: false,
   });
@@ -213,6 +225,7 @@ export default function App() {
       antispark: nextState,
       park: nextState,
       unlock: nextState,
+      profiles: nextState,
       cruise: nextState,
       brake: nextState,
     });
@@ -1085,6 +1098,7 @@ export default function App() {
         if (!deviceRef.current) return;
         try {
           await sendCmd('S');
+          await sendCmd('CFGP');
         } catch (e) {
           console.warn('Initial telemetry sync failed:', e);
         }
@@ -1424,6 +1438,28 @@ export default function App() {
       setActiveGear(1);
     }
 
+    const cfgpAllMatch = str.match(/CFGP U2:\s*SPD=([\d.]+)\s*CURR=([\d.]+)\s*\|\s*U3:\s*SPD=([\d.]+).*?CURR=([\d.]+)/);
+    if (cfgpAllMatch) {
+      setUnlockedProfiles({
+        2: { speedLimit: Math.round(parseFloat(cfgpAllMatch[1])), maxCurrent: Math.round(parseFloat(cfgpAllMatch[2])) },
+        3: { speedLimit: Math.round(parseFloat(cfgpAllMatch[3])), maxCurrent: Math.round(parseFloat(cfgpAllMatch[4])) },
+      });
+    }
+    const cfgp2Match = str.match(/CFGP U2 set:\s*SPD=([\d.]+)\s*km\/h\s*CURR=([\d.]+)\s*A/);
+    if (cfgp2Match) {
+      setUnlockedProfiles((prev) => ({
+        ...prev,
+        2: { speedLimit: Math.round(parseFloat(cfgp2Match[1])), maxCurrent: Math.round(parseFloat(cfgp2Match[2])) },
+      }));
+    }
+    const cfgp3Match = str.match(/CFGP U3 set:\s*SPD=([\d.]+)\s*km\/h\s*CURR=([\d.]+)\s*A/);
+    if (cfgp3Match) {
+      setUnlockedProfiles((prev) => ({
+        ...prev,
+        3: { speedLimit: Math.round(parseFloat(cfgp3Match[1])), maxCurrent: Math.round(parseFloat(cfgp3Match[2])) },
+      }));
+    }
+
     if (str.includes('LIGHT: ON')) setFrontLightOn(true);
     else if (str.includes('LIGHT: OFF')) setFrontLightOn(false);
 
@@ -1581,6 +1617,20 @@ export default function App() {
       } else if (cmdStr.startsWith('UL ') || cmdStr.startsWith('GS ')) {
         const en = cmdStr.split(' ')[1] === '1';
         setUnlockEnabled(en);
+      } else if (cmdStr === 'CFGP') {
+        addConsole(`[SIM] CFGP U2: SPD=${unlockedProfiles[2].speedLimit}.0 CURR=${unlockedProfiles[2].maxCurrent}.0 | U3: SPD=${unlockedProfiles[3].speedLimit}.0 (${unlockedProfiles[3].speedLimit === 0 ? 'Unlimited' : 'Limited'}) CURR=${unlockedProfiles[3].maxCurrent}.0`);
+      } else if (cmdStr.startsWith('CFGP ')) {
+        const parts = cmdStr.split(' ');
+        const g = parseInt(parts[1], 10);
+        const spd = parseFloat(parts[2]);
+        const curr = parseFloat(parts[3]);
+        if (g === 2 || g === 3) {
+          setUnlockedProfiles((prev) => ({
+            ...prev,
+            [g]: { speedLimit: Math.round(spd), maxCurrent: Math.round(curr) },
+          }));
+          addConsole(`[SIM-TX] CFGP U${g} set: SPD=${spd.toFixed(1)} km/h CURR=${curr.toFixed(1)} A`);
+        }
       } else if (cmdStr.startsWith('BEN ')) {
         const en = cmdStr.split(' ')[1] === '1';
         setBrakeEnabled(en);
@@ -1905,11 +1955,22 @@ export default function App() {
     <View style={inLandscapeMode ? styles.profilesSectionLandscape : styles.profilesSection}>
       <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>SPEED PROFILES</Text>
-        <Text style={styles.activeProfileLabel}>
-          {parkEnabled || activeGear === 0
-            ? '🅿️ Park (Gear 0)'
-            : `Gear ${activeGear} ${unlockEnabled ? '(Unlocked 25 / Unlim)' : '(Locked 5 / 15 / 20)'}`}
-        </Text>
+        <TouchableOpacity
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            if (isLandscape) {
+              switchLandscapePage(1);
+            }
+            setOpenSections((prev) => ({ ...prev, profiles: true }));
+          }}
+          activeOpacity={0.7}
+        >
+          <Text style={styles.activeProfileLabel}>
+            {parkEnabled || activeGear === 0
+              ? '🅿️ Park (Gear 0)'
+              : `Gear ${activeGear} ${unlockEnabled ? `(U2: ${unlockedProfiles[2].speedLimit}k / U3: ${unlockedProfiles[3].speedLimit === 0 ? 'Unlim' : unlockedProfiles[3].speedLimit + 'k'})` : '(Locked 5 / 15 / 20)'} ⚙️`}
+          </Text>
+        </TouchableOpacity>
       </View>
 
       <View style={[styles.profileGrid, inLandscapeMode && styles.profileGridLandscape]}>
@@ -1925,16 +1986,18 @@ export default function App() {
           {
             gear: 2,
             name: unlockEnabled ? 'Drive Unlocked' : 'City Cruising',
-            limit: unlockEnabled ? '25 km/h' : '15 km/h',
-            amps: unlockEnabled ? '65A Max' : '40A Max',
+            limit: unlockEnabled ? `${unlockedProfiles[2].speedLimit} km/h` : '15 km/h',
+            amps: unlockEnabled ? `${Math.round(unlockedProfiles[2].maxCurrent)}A Max` : '40A Max',
             color: '#00f2fe',
             handlebar: 'Disp 2',
           },
           {
             gear: 3,
             name: unlockEnabled ? 'Sport Unlimited' : 'Drive Legal',
-            limit: unlockEnabled ? 'Unlimited' : '20 km/h',
-            amps: unlockEnabled ? '120A Max' : '65A Max',
+            limit: unlockEnabled
+              ? (unlockedProfiles[3].speedLimit === 0 ? 'Unlimited' : `${unlockedProfiles[3].speedLimit} km/h`)
+              : '20 km/h',
+            amps: unlockEnabled ? `${Math.round(unlockedProfiles[3].maxCurrent)}A Max` : '65A Max',
             color: unlockEnabled ? '#f43f5e' : '#f59e0b',
             handlebar: 'Disp 3',
           },
@@ -2511,6 +2574,399 @@ export default function App() {
   );
 
   const renderGearShiftCard = renderUnlockCard;
+
+  const renderUnlockedProfilesCard = () => {
+    const isG2 = selectedUnlockedGear === 2;
+    const curCfg = unlockedProfiles[selectedUnlockedGear];
+    const estimatedWatts = Math.round(curCfg.maxCurrent * (parseFloat(voltage) || 48));
+
+    return (
+      <View style={styles.controlsCard}>
+        <TouchableOpacity
+          style={styles.cardHeaderCollapseRow}
+          onPress={() => toggleSection('profiles')}
+          activeOpacity={0.7}
+        >
+          <View style={styles.gearShiftTextCol}>
+            <View style={styles.gearShiftTitleRow}>
+              <Text style={styles.gearShiftTitle}>⚡ UNLOCKED PROFILES (G2 & G3)</Text>
+              <View style={[styles.gearShiftBadge, unlockEnabled ? styles.gearShiftBadgeOn : styles.gearShiftBadgeOff]}>
+                <Text style={[styles.gearShiftBadgeText, unlockEnabled ? styles.gearShiftBadgeTextOn : styles.gearShiftBadgeTextOff]}>
+                  {`G2: ${unlockedProfiles[2].speedLimit}k/${unlockedProfiles[2].maxCurrent}A • G3: ${unlockedProfiles[3].speedLimit === 0 ? '∞' : unlockedProfiles[3].speedLimit + 'k'}/${unlockedProfiles[3].maxCurrent}A`}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.gearShiftDesc} numberOfLines={openSections.profiles ? undefined : 1}>
+              Configure speed limit and maximum motor current for unlocked gears (G1 is fixed to 5 km/h for safety)
+            </Text>
+          </View>
+          <Text style={styles.sectionToggleIcon}>{openSections.profiles ? '▲' : '▼'}</Text>
+        </TouchableOpacity>
+
+        {openSections.profiles && (
+          <View style={{ gap: 12, marginTop: 10, borderTopWidth: 1, borderTopColor: 'rgba(255, 255, 255, 0.08)', paddingTop: 12 }}>
+            {/* Mode status hint */}
+            <View style={{
+              backgroundColor: unlockEnabled ? 'rgba(0, 242, 254, 0.1)' : 'rgba(245, 158, 11, 0.1)',
+              borderRadius: 8,
+              padding: 10,
+              borderWidth: 1,
+              borderColor: unlockEnabled ? 'rgba(0, 242, 254, 0.3)' : 'rgba(245, 158, 11, 0.3)',
+            }}>
+              <Text style={{
+                color: unlockEnabled ? '#00f2fe' : '#f59e0b',
+                fontSize: 12,
+                fontWeight: '600',
+              }}>
+                {unlockEnabled
+                  ? '🚀 UNLOCK ACTIVE: Custom limits are applied live to the motor controller.'
+                  : '⚠️ SCOOTER LOCKED: Legal limits (15/20 km/h) active. Custom limits apply when Unlock is turned ON.'}
+              </Text>
+            </View>
+
+            {/* Gear Selector Tabs (G2 vs G3) */}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  backgroundColor: selectedUnlockedGear === 2 ? 'rgba(0, 242, 254, 0.2)' : '#101626',
+                  borderWidth: 1,
+                  borderColor: selectedUnlockedGear === 2 ? '#00f2fe' : 'rgba(255, 255, 255, 0.1)',
+                }}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSelectedUnlockedGear(2);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  color: selectedUnlockedGear === 2 ? '#00f2fe' : '#94a3b8',
+                  fontWeight: '700',
+                  fontSize: 13,
+                }}>
+                  GEAR 2 (DRIVE)
+                </Text>
+                <Text style={{
+                  color: selectedUnlockedGear === 2 ? '#ffffff' : '#64748b',
+                  fontSize: 11,
+                  marginTop: 2,
+                }}>
+                  {unlockedProfiles[2].speedLimit} km/h • {unlockedProfiles[2].maxCurrent}A
+                </Text>
+              </TouchableOpacity>
+
+              <TouchableOpacity
+                style={{
+                  flex: 1,
+                  paddingVertical: 10,
+                  borderRadius: 8,
+                  alignItems: 'center',
+                  backgroundColor: selectedUnlockedGear === 3 ? 'rgba(244, 63, 94, 0.2)' : '#101626',
+                  borderWidth: 1,
+                  borderColor: selectedUnlockedGear === 3 ? '#f43f5e' : 'rgba(255, 255, 255, 0.1)',
+                }}
+                onPress={() => {
+                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                  setSelectedUnlockedGear(3);
+                }}
+                activeOpacity={0.7}
+              >
+                <Text style={{
+                  color: selectedUnlockedGear === 3 ? '#f43f5e' : '#94a3b8',
+                  fontWeight: '700',
+                  fontSize: 13,
+                }}>
+                  GEAR 3 (SPORT)
+                </Text>
+                <Text style={{
+                  color: selectedUnlockedGear === 3 ? '#ffffff' : '#64748b',
+                  fontSize: 11,
+                  marginTop: 2,
+                }}>
+                  {unlockedProfiles[3].speedLimit === 0 ? 'Unlimited' : `${unlockedProfiles[3].speedLimit} km/h`} • {unlockedProfiles[3].maxCurrent}A
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            {/* Config Sliders for Selected Gear */}
+            {isG2 ? (
+              <>
+                {/* Gear 2 Speed Slider (15..40 km/h) */}
+                <View style={styles.sliderHeader}>
+                  <Text style={styles.controlLabel}>Gear 2 Speed Limit</Text>
+                  <Text style={[styles.sliderVal, { color: '#00f2fe' }]}>
+                    {unlockedProfiles[2].speedLimit} km/h
+                  </Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={15}
+                  maximumValue={40}
+                  step={1}
+                  value={unlockedProfiles[2].speedLimit}
+                  onValueChange={(val) => {
+                    setUnlockedProfiles((prev) => ({
+                      ...prev,
+                      2: { ...prev[2], speedLimit: Math.round(val) },
+                    }));
+                  }}
+                  onSlidingComplete={(val) => {
+                    const spd = Math.round(val);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    sendCmd(`CFGP 2 ${spd} ${unlockedProfiles[2].maxCurrent}`);
+                  }}
+                  minimumTrackTintColor="#00f2fe"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+                  thumbTintColor="#00f2fe"
+                />
+
+                {/* Gear 2 Max Current Slider (20..100 A) */}
+                <View style={styles.sliderHeader}>
+                  <Text style={styles.controlLabel}>Gear 2 Max Current</Text>
+                  <Text style={[styles.sliderVal, { color: '#00f2fe' }]}>
+                    {unlockedProfiles[2].maxCurrent} A (~{estimatedWatts}W peak)
+                  </Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={20}
+                  maximumValue={100}
+                  step={1}
+                  value={unlockedProfiles[2].maxCurrent}
+                  onValueChange={(val) => {
+                    setUnlockedProfiles((prev) => ({
+                      ...prev,
+                      2: { ...prev[2], maxCurrent: Math.round(val) },
+                    }));
+                  }}
+                  onSlidingComplete={(val) => {
+                    const cur = Math.round(val);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    sendCmd(`CFGP 2 ${unlockedProfiles[2].speedLimit} ${cur}`);
+                  }}
+                  minimumTrackTintColor="#00f2fe"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+                  thumbTintColor="#00f2fe"
+                />
+
+                {/* Quick Presets for Gear 2 */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {[
+                    { label: 'Eco (20k/40A)', spd: 20, cur: 40 },
+                    { label: 'City Default (25k/65A)', spd: 25, cur: 65 },
+                    { label: 'Cruiser (32k/80A)', spd: 32, cur: 80 },
+                    { label: 'Max G2 (40k/100A)', spd: 40, cur: 100 },
+                  ].map((p) => (
+                    <TouchableOpacity
+                      key={p.label}
+                      style={{
+                        backgroundColor: '#161f36',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor:
+                          unlockedProfiles[2].speedLimit === p.spd && unlockedProfiles[2].maxCurrent === p.cur
+                            ? '#00f2fe'
+                            : 'rgba(255, 255, 255, 0.08)',
+                      }}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        setUnlockedProfiles((prev) => ({
+                          ...prev,
+                          2: { speedLimit: p.spd, maxCurrent: p.cur },
+                        }));
+                        sendCmd(`CFGP 2 ${p.spd} ${p.cur}`);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{
+                        color: unlockedProfiles[2].speedLimit === p.spd && unlockedProfiles[2].maxCurrent === p.cur ? '#00f2fe' : '#94a3b8',
+                        fontSize: 11,
+                        fontWeight: '600',
+                      }}>
+                        {p.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            ) : (
+              <>
+                {/* Gear 3 Speed Slider (20..60 km/h or Unlimited) */}
+                <View style={styles.sliderHeader}>
+                  <Text style={styles.controlLabel}>Gear 3 Speed Limit</Text>
+                  <Text style={[styles.sliderVal, { color: '#f43f5e' }]}>
+                    {unlockedProfiles[3].speedLimit === 0 ? '⚡ Unlimited (100k ERPM)' : `${unlockedProfiles[3].speedLimit} km/h`}
+                  </Text>
+                </View>
+
+                {/* Unlimited Toggle Button */}
+                <View style={{ flexDirection: 'row', gap: 8, marginBottom: 6 }}>
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: unlockedProfiles[3].speedLimit === 0 ? 'rgba(244, 63, 94, 0.25)' : '#161f36',
+                      borderColor: unlockedProfiles[3].speedLimit === 0 ? '#f43f5e' : 'rgba(255, 255, 255, 0.1)',
+                      borderWidth: 1,
+                      paddingVertical: 8,
+                      borderRadius: 6,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      setUnlockedProfiles((prev) => ({
+                        ...prev,
+                        3: { ...prev[3], speedLimit: 0 },
+                      }));
+                      sendCmd(`CFGP 3 0 ${unlockedProfiles[3].maxCurrent}`);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{
+                      color: unlockedProfiles[3].speedLimit === 0 ? '#f43f5e' : '#94a3b8',
+                      fontWeight: '700',
+                      fontSize: 12,
+                    }}>
+                      ⚡ UNLIMITED SPEED
+                    </Text>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={{
+                      flex: 1,
+                      backgroundColor: unlockedProfiles[3].speedLimit > 0 ? 'rgba(245, 158, 11, 0.2)' : '#161f36',
+                      borderColor: unlockedProfiles[3].speedLimit > 0 ? '#f59e0b' : 'rgba(255, 255, 255, 0.1)',
+                      borderWidth: 1,
+                      paddingVertical: 8,
+                      borderRadius: 6,
+                      alignItems: 'center',
+                    }}
+                    onPress={() => {
+                      const target = unlockedProfiles[3].speedLimit === 0 ? 45 : unlockedProfiles[3].speedLimit;
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      setUnlockedProfiles((prev) => ({
+                        ...prev,
+                        3: { ...prev[3], speedLimit: target },
+                      }));
+                      sendCmd(`CFGP 3 ${target} ${unlockedProfiles[3].maxCurrent}`);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <Text style={{
+                      color: unlockedProfiles[3].speedLimit > 0 ? '#f59e0b' : '#94a3b8',
+                      fontWeight: '700',
+                      fontSize: 12,
+                    }}>
+                      🛑 GOVERNED LIMIT ({unlockedProfiles[3].speedLimit === 0 ? 45 : unlockedProfiles[3].speedLimit}k)
+                    </Text>
+                  </TouchableOpacity>
+                </View>
+
+                {unlockedProfiles[3].speedLimit > 0 && (
+                  <Slider
+                    style={styles.slider}
+                    minimumValue={20}
+                    maximumValue={60}
+                    step={1}
+                    value={unlockedProfiles[3].speedLimit}
+                    onValueChange={(val) => {
+                      setUnlockedProfiles((prev) => ({
+                        ...prev,
+                        3: { ...prev[3], speedLimit: Math.round(val) },
+                      }));
+                    }}
+                    onSlidingComplete={(val) => {
+                      const spd = Math.round(val);
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                      sendCmd(`CFGP 3 ${spd} ${unlockedProfiles[3].maxCurrent}`);
+                    }}
+                    minimumTrackTintColor="#f43f5e"
+                    maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+                    thumbTintColor="#f43f5e"
+                  />
+                )}
+
+                {/* Gear 3 Max Current Slider (20..120 A) */}
+                <View style={styles.sliderHeader}>
+                  <Text style={styles.controlLabel}>Gear 3 Max Current</Text>
+                  <Text style={[styles.sliderVal, { color: '#f43f5e' }]}>
+                    {unlockedProfiles[3].maxCurrent} A (~{estimatedWatts}W peak)
+                  </Text>
+                </View>
+                <Slider
+                  style={styles.slider}
+                  minimumValue={20}
+                  maximumValue={120}
+                  step={1}
+                  value={unlockedProfiles[3].maxCurrent}
+                  onValueChange={(val) => {
+                    setUnlockedProfiles((prev) => ({
+                      ...prev,
+                      3: { ...prev[3], maxCurrent: Math.round(val) },
+                    }));
+                  }}
+                  onSlidingComplete={(val) => {
+                    const cur = Math.round(val);
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    sendCmd(`CFGP 3 ${unlockedProfiles[3].speedLimit} ${cur}`);
+                  }}
+                  minimumTrackTintColor="#f43f5e"
+                  maximumTrackTintColor="rgba(255, 255, 255, 0.15)"
+                  thumbTintColor="#f43f5e"
+                />
+
+                {/* Quick Presets for Gear 3 */}
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 4 }}>
+                  {[
+                    { label: 'Mild Sport (35k/80A)', spd: 35, cur: 80 },
+                    { label: 'Fast (45k/100A)', spd: 45, cur: 100 },
+                    { label: 'Beast (Unlimited/100A)', spd: 0, cur: 100 },
+                    { label: 'Full Sport Default (Unlimited/120A)', spd: 0, cur: 120 },
+                  ].map((p) => (
+                    <TouchableOpacity
+                      key={p.label}
+                      style={{
+                        backgroundColor: '#161f36',
+                        paddingHorizontal: 10,
+                        paddingVertical: 6,
+                        borderRadius: 6,
+                        borderWidth: 1,
+                        borderColor:
+                          unlockedProfiles[3].speedLimit === p.spd && unlockedProfiles[3].maxCurrent === p.cur
+                            ? '#f43f5e'
+                            : 'rgba(255, 255, 255, 0.08)',
+                      }}
+                      onPress={() => {
+                        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                        setUnlockedProfiles((prev) => ({
+                          ...prev,
+                          3: { speedLimit: p.spd, maxCurrent: p.cur },
+                        }));
+                        sendCmd(`CFGP 3 ${p.spd} ${p.cur}`);
+                      }}
+                      activeOpacity={0.7}
+                    >
+                      <Text style={{
+                        color: unlockedProfiles[3].speedLimit === p.spd && unlockedProfiles[3].maxCurrent === p.cur ? '#f43f5e' : '#94a3b8',
+                        fontSize: 11,
+                        fontWeight: '600',
+                      }}>
+                        {p.label}
+                      </Text>
+                    </TouchableOpacity>
+                  ))}
+                </View>
+              </>
+            )}
+          </View>
+        )}
+      </View>
+    );
+  };
 
   const renderCruiseCard = () => (
     <View style={[styles.gearShiftCard, cruiseActive && styles.cruiseCardActive]}>
@@ -3359,6 +3815,7 @@ export default function App() {
                 {renderAntisparkCard()}
                 {renderParkCard()}
                 {renderGearShiftCard()}
+                {renderUnlockedProfilesCard()}
                 {renderCruiseCard()}
                 {renderBrakeCard()}
                 {renderConsoleCard()}
@@ -3419,6 +3876,7 @@ export default function App() {
           {renderAntisparkCard()}
           {renderParkCard()}
           {renderGearShiftCard()}
+          {renderUnlockedProfilesCard()}
           {renderCruiseCard()}
           {renderBrakeCard()}
           {renderConsoleCard()}
