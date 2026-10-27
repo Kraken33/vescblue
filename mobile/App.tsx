@@ -89,6 +89,7 @@ export default function App() {
   const [activeGear, setActiveGear] = useState(1);
   const [parkEnabled, setParkEnabled] = useState(false);
   const [parkLockActive, setParkLockActive] = useState(false);
+  const [parkSecurityLocked, setParkSecurityLocked] = useState(false);
   const [parkErpm, setParkErpm] = useState(100);
   const [parkBrakeAmps, setParkBrakeAmps] = useState(35);
   const lastNonParkGearRef = useRef<number>(1);
@@ -247,7 +248,7 @@ export default function App() {
   const [antisparkStatusText, setAntisparkStatusText] = useState('Disconnected');
   const [isAntisparkConnecting, setIsAntisparkConnecting] = useState(false);
   const [antisparkState, setAntisparkState] = useState(false); // true = ON (GPIO 10 HIGH), false = OFF (GPIO 10 LOW)
-  const [antisparkAutoCutoff, setAntisparkAutoCutoff] = useState<boolean>(true); // true = auto turn off on disconnect, false = stays ON
+  const [antisparkAutoCutoff, setAntisparkAutoCutoff] = useState<boolean>(false); // false = power kept ON for Park Mode, true = auto power cut
   // Apple iBeacon Hands-Free Auto Key State
   const [iBeaconAutoKey, setIBeaconAutoKey] = useState<boolean>(true);
   const [iBeaconStatus, setIBeaconStatus] = useState<string>('Standby');
@@ -271,7 +272,7 @@ export default function App() {
   const parseAntisparkTelemetryRef = useRef<((str: string) => void) | null>(null);
   const speedRef = useRef<number>(0.0);
   const antisparkStateRef = useRef<boolean>(false);
-  const antisparkAutoCutoffRef = useRef<boolean>(true);
+  const antisparkAutoCutoffRef = useRef<boolean>(false);
   const iBeaconAutoKeyRef = useRef<boolean>(true);
   const iBeaconSensitivityRef = useRef<'immediate' | 'near' | 'far'>('near');
   const manualDisconnectRef = useRef<boolean>(false);
@@ -518,6 +519,15 @@ export default function App() {
       ) {
         addConsole(`[iBEACON] 🎯 Target Proximity reached (${proxStr}, ${event.accuracy > 0 ? event.accuracy.toFixed(1) + 'm' : event.rssi + 'dBm'}). Auto-Power ON!`);
         scanAndConnectAntispark();
+      } else if (
+        shouldTrigger &&
+        iBeaconAutoKeyRef.current &&
+        antisparkStateRef.current &&
+        !deviceRef.current &&
+        !isMainConnectingRef.current
+      ) {
+        addConsole(`[iBEACON] 🎯 Proximity reached while powered. Auto-connecting to Scooter-ESP32 to unlock Park Mode...`);
+        connectBle();
       }
     });
 
@@ -732,7 +742,11 @@ export default function App() {
       setTimeout(async () => {
         await sendAntisparkCmd('STATUS');
         await sendAntisparkCmd('PWR 1');
-      }, 300);
+        // Auto-connect to main Scooter-ESP32 to release Park Mode interlock
+        if (!deviceRef.current && !isMainConnectingRef.current) {
+          connectBle();
+        }
+      }, 350);
     } catch (e: any) {
       console.warn('Antispark connect failed:', e);
       setAntisparkStatusText('Failed: ' + e.message);
@@ -1315,6 +1329,8 @@ export default function App() {
     isWritingRef.current = false;
     espGearRef.current = 0;
     setUnlockEnabled(false);
+    setParkEnabled(true);
+    setParkSecurityLocked(true);
     setIsConnected(false);
     setDevice(null);
     deviceRef.current = null;
@@ -1364,6 +1380,7 @@ export default function App() {
     const absMatch = str.match(/\bABS=(\d+)/);
     const afMatch = str.match(/\bAF=(\d+)/);
     const abssMatch = str.match(/\bABSS=(\d+)/);
+    const plockMatch = str.match(/\bPLOCK=(\d+)/);
 
     if (spdMatch) setSpeed(parseFloat(spdMatch[1]));
     if (vMatch) setVoltage(parseFloat(vMatch[1]).toFixed(1));
@@ -1387,6 +1404,7 @@ export default function App() {
       if (!en) setParkLockActive(false);
     }
     if (plMatch) setParkLockActive(plMatch[1] === '1');
+    if (plockMatch) setParkSecurityLocked(plockMatch[1] === '1');
     if (peMatch) setParkErpm(Math.round(parseFloat(peMatch[1])));
     const peLog = str.match(/PARK ERPM (?:set to |:\s*)(\d+)/);
     if (peLog) setParkErpm(parseInt(peLog[1], 10));
@@ -1823,9 +1841,9 @@ export default function App() {
       {/* Badges */}
       <View style={styles.badgeRow}>
         {parkEnabled && (
-          <View style={[styles.badge, parkLockActive ? styles.badgeBraking : styles.badgeCruiseG4]}>
-            <Text style={[styles.badgeText, parkLockActive ? styles.badgeTextBraking : styles.badgeTextCruiseG4]}>
-              {parkLockActive ? '🚨 PARK LOCKED' : '🅿️ PARK'}
+          <View style={[styles.badge, (parkLockActive || parkSecurityLocked) ? styles.badgeBraking : styles.badgeCruiseG4]}>
+            <Text style={[styles.badgeText, (parkLockActive || parkSecurityLocked) ? styles.badgeTextBraking : styles.badgeTextCruiseG4]}>
+              {parkSecurityLocked ? '🔒 PARK LOCKED (AWAY)' : (parkLockActive ? '🚨 PARK BRAKING' : '🅿️ PARK')}
             </Text>
           </View>
         )}
@@ -2071,7 +2089,7 @@ export default function App() {
               <Text style={styles.autoCutoffDesc}>
                 {antisparkAutoCutoff
                   ? 'Power turns OFF automatically when Bluetooth signal is lost, app is closed, or phone walks away.'
-                  : '⚠️ Scooter stays powered ON if app closes, reloads during debugging, or disconnects.'}
+                  : '🛡️ Active Park Mode enabled: Scooter stays powered ON in Park Mode when phone disconnects, actively blocking wheel motion.'}
               </Text>
             </View>
             <View style={{ flexShrink: 0 }}>
@@ -2362,19 +2380,23 @@ export default function App() {
                 style={[
                   styles.gearShiftBadgeText,
                   parkEnabled
-                    ? (parkLockActive ? styles.badgeTextBraking : styles.cruiseBadgeTextG4)
+                    ? ((parkLockActive || parkSecurityLocked) ? styles.badgeTextBraking : styles.cruiseBadgeTextG4)
                     : styles.gearShiftBadgeTextOff,
                 ]}
               >
                 {parkEnabled
-                  ? (parkLockActive ? '🚨 MOTION BLOCKED' : 'PARK ON (DISP 0)')
+                  ? (parkSecurityLocked
+                      ? '🔒 PHONE AWAY (LOCKED)'
+                      : (parkLockActive ? '🚨 MOTION BLOCKED' : 'PARK ON (DISP 0)'))
                   : 'DRIVING (GEAR 1–3)'}
               </Text>
             </View>
           </View>
           <Text style={styles.gearShiftDesc} numberOfLines={openSections.park ? undefined : 1}>
             {parkEnabled
-              ? parkLockActive
+              ? parkSecurityLocked
+                ? 'Security lock active: phone is away. Handlebar display buttons cannot exit Park Mode until you return.'
+                : parkLockActive
                 ? 'Motion detected! Applying active directional counter-torque and electromagnetic brake to lock motors.'
                 : `Park active (Gear 0). Motors in 0A silent standby; automatically blocks movement if pushed.`
               : 'Locks scooter motors when parked. Detects any movement and immediately blocks it via directional brakes.'}

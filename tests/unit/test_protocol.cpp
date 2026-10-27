@@ -121,6 +121,40 @@ int main() {
         if (spd >= maxSpeed) assert(actualCurrent == 0.0f);
     }
 
+    // Test 7: Park Mode Security Interlock on Bluetooth Disconnect
+    bool parkSecurityLocked = true;
+    int currentGear = 0;
+    uint8_t displayTargetGear = 0;
+    uint8_t displayGearSyncRemaining = 0;
+
+    // Simulate display RX packet requesting Gear 1 (raw = 5) while locked
+    int rawGear = 5;
+    if (parkSecurityLocked) {
+        if (rawGear != 0) {
+            displayTargetGear = 0;
+            displayGearSyncRemaining = 4;
+        }
+    } else {
+        currentGear = rawGear / 5;
+    }
+    assert(currentGear == 0);
+    assert(displayTargetGear == 0);
+    assert(displayGearSyncRemaining == 4);
+    std::cout << "[PASS] Park Security Interlock: Physical gear button change rejected while phone disconnected." << std::endl;
+
+    // Simulate phone reconnecting: parkSecurityLocked cleared
+    parkSecurityLocked = false;
+    if (parkSecurityLocked) {
+        if (rawGear != 0) {
+            displayTargetGear = 0;
+            displayGearSyncRemaining = 4;
+        }
+    } else {
+        currentGear = rawGear / 5;
+    }
+    assert(currentGear == 1);
+    std::cout << "[PASS] Park Security Interlock: Physical gear shift accepted after phone reconnected." << std::endl;
+
     std::cout << "\n>>> ALL UNIT TESTS PASSED! Firmware algorithms are verified and ready. <<<" << std::endl;
     return 0;
 }

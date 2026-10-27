@@ -181,6 +181,7 @@ bool secretComboUnlocked = false;
 bool unlockEnabled = false;
 bool gearShiftEnabled = false; // Alias for backward compatibility
 uint8_t gearHistory[7] = {1, 1, 1, 1, 1, 1, 1};
+bool parkSecurityLocked = false;
 
 // Cruise Control State
 bool cruiseControlEnabled = false;
@@ -664,7 +665,13 @@ void handleDisplayRxPacket(const uint8_t *packet) {
   bool light = (packet[9] & 0x08) != 0;
 
   // Handle Gear change
-  if (displayGearSyncRemaining > 0) {
+  if (parkSecurityLocked) {
+    // Proximity Security Interlock: Disallow disabling Park Mode from physical display until phone is detected
+    if (rawGear != 0) {
+      displayTargetGear = 0;
+      displayGearSyncRemaining = 4;
+    }
+  } else if (displayGearSyncRemaining > 0) {
     if (rawGear == displayTargetGear * 5 || rawGear == displayTargetGear) {
       displayGearSyncRemaining = 0;
       lastRawGear = rawGear;
@@ -829,7 +836,7 @@ void bleHandleCommand(const String &cmd) {
     snprintf(buf, sizeof(buf),
              "SPD=%.1f G=%d PARK=%d PL=%d S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f PROF=%s "
              "LIM=%.0fkm/h KICK=%s(%.0f) UL=%d GS=%d CC=%s PIN19=%d BPIN=%d BPOL=%s "
-             "BC=%.1fA PA=%.1fA PE=%.0f ABS=%d AF=%d ABSS=%d CAN=%d",
+             "BC=%.1fA PA=%.1fA PE=%.0f ABS=%d AF=%d ABSS=%d CAN=%d PLOCK=%d",
              vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
              (currentGear == 0 && parkMotionDetected) ? 1 : 0,
              profileSSwitch ? 1 : 0, currentVoltageReading, currentRawThrottle,
@@ -841,7 +848,8 @@ void bleHandleCommand(const String &cmd) {
              (unlockEnabled && bleClientConnected) ? 1 : 0, ccStatus,
              digitalRead(19), brakePin, brakeActiveLow ? "LOW" : "HIGH",
              userBrakeAmps, parkBrakeAmps, parkErpmThreshold, absEnabled ? 1 : 0, absFrequencyHz,
-             absStrobeEnabled ? 1 : 0, slaveCanId);
+             absStrobeEnabled ? 1 : 0, slaveCanId,
+             parkSecurityLocked ? 1 : 0);
     blePushLine(String(buf));
   } else if (cmd == "UL" || cmd == "UNLOCK" || cmd == "GS" || cmd == "GSHIFT") {
     blePushLine("UNLOCK is " +
@@ -1195,6 +1203,7 @@ class OtaCallbacks : public BLECharacteristicCallbacks {
 class ServerCallbacks : public BLEServerCallbacks {
   void onConnect(BLEServer *) {
     bleClientConnected = true;
+    parkSecurityLocked = false;
     lastBleNotify = millis() + 800; // 800ms quiet window so mobile app completes GATT discovery & CCCD subscribe cleanly
   }
   void onDisconnect(BLEServer *) {
@@ -1208,6 +1217,9 @@ class ServerCallbacks : public BLEServerCallbacks {
       cruiseTopSpeedStartTime = 0;
     }
     applyUnlockState();
+    // Auto-engage Park Mode on disconnect and lock out physical overrides until phone returns
+    parkSecurityLocked = true;
+    setGear(0, true);
     bleServer->getAdvertising()->start();
   }
 };
@@ -1561,7 +1573,7 @@ void loop() {
 
   if (bleClientConnected && now - lastBleNotify > 200) {
     lastBleNotify = now;
-    char buf[300];
+    char buf[320];
     const char *ccStatus =
         !cruiseControlEnabled
             ? "0"
@@ -1569,7 +1581,7 @@ void loop() {
                                 : (cruiseControlActive ? "ACTIVE" : "1"));
     snprintf(
         buf, sizeof(buf),
-        "SPD=%.1f G=%d PARK=%d PL=%d PE=%.0f PA=%.0f S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d",
+        "SPD=%.1f G=%d PARK=%d PL=%d PE=%.0f PA=%.0f S=%d V=%.2f RAW=%d BRK=%d BEN=%d AMP=%.1f KICK=%s CC=%s L=%d TL=%d TR=%d DDM=%d UL=%d GS=%d ABS=%d AF=%d PLOCK=%d",
         vehicleSpeedKmH, currentGear, (currentGear == 0) ? 1 : 0,
         (currentGear == 0 && parkMotionDetected) ? 1 : 0,
         parkErpmThreshold, parkBrakeAmps,
@@ -1582,7 +1594,8 @@ void loop() {
         dualMotorEnabled ? 1 : 0,
         (unlockEnabled && bleClientConnected) ? 1 : 0,
         (unlockEnabled && bleClientConnected) ? 1 : 0,
-        absEnabled ? 1 : 0, absFrequencyHz);
+        absEnabled ? 1 : 0, absFrequencyHz,
+        parkSecurityLocked ? 1 : 0);
     blePushLine(String(buf));
   }
 

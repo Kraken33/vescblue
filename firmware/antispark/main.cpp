@@ -5,6 +5,7 @@
 #include <BLE2902.h>
 #include <BLEBeacon.h>
 #include <Preferences.h>
+#include <Update.h>
 
 
 // =========================================================================
@@ -30,6 +31,7 @@
 #define BLE_DEVICE_NAME     "Scooter-Antispark"
 #define BLE_SVC_UUID        "6e400010-b5a3-f393-e0a9-e50e24dcca9e"
 #define BLE_CTRL_UUID       "6e400011-b5a3-f393-e0a9-e50e24dcca9e"
+#define BLE_OTA_UUID        "6e400012-b5a3-f393-e0a9-e50e24dcca9e"
 
 // =========================================================================
 // Apple iBeacon Configuration (Target: FDA50693-A4E2-4FB1-AFCF-C6EB07647825)
@@ -45,11 +47,16 @@
 // =========================================================================
 static BLEServer *pServer = nullptr;
 static BLECharacteristic *pCtrlChar = nullptr;
+static BLECharacteristic *pOtaChar = nullptr;
 static Preferences prefs;
 
 static bool antisparkState = false;    // false = OFF (LOW), true = ON (HIGH)
 static bool beaconActive = true;       // false when manually turned OFF via app
-static bool autoCutoffEnabled = true;  // false = stays ON on BLE disconnect, true = auto power cut
+static bool autoCutoffEnabled = false; // false = stays ON on BLE disconnect for Park Mode, true = auto power cut
+
+static bool bleOtaActive = false;
+static size_t bleOtaExpected = 0;
+static size_t bleOtaReceived = 0;
 
 static bool isClientConnected = false;
 static bool oldClientConnected = false;
@@ -68,6 +75,7 @@ static inline void writeStatusLed(bool on) {
 // Forward Declarations
 void setAntisparkState(bool state, const char *reason);
 void notifyStatus();
+void notifyMsg(const String &msg);
 void handleCommand(const String &cmd);
 void updateAdvertising(bool enableBeacon);
 
@@ -82,11 +90,15 @@ class ServerCallbacks : public BLEServerCallbacks {
 
   void onDisconnect(BLEServer *pServer) override {
     isClientConnected = false;
+    if (bleOtaActive) {
+      Update.abort();
+      bleOtaActive = false;
+    }
     if (autoCutoffEnabled) {
       Serial.println(F("[ANTISPARK] Signal lost - turning Antispark OFF automatically"));
       setAntisparkState(false, "BLE Signal Lost (Auto-off)");
     } else {
-      Serial.println(F("[ANTISPARK] Signal lost - Auto-off DISABLED (keeping Antispark ON)"));
+      Serial.println(F("[ANTISPARK] Signal lost - Power kept ON for Park Mode"));
     }
   }
 };
@@ -101,6 +113,23 @@ class ControlCallbacks : public BLECharacteristicCallbacks {
     if (cmd.length() > 0) {
       handleCommand(cmd);
     }
+  }
+};
+
+class OtaCallbacks : public BLECharacteristicCallbacks {
+  void onWrite(BLECharacteristic *c) override {
+    if (!bleOtaActive)
+      return;
+    size_t n = c->getLength();
+    if (n == 0)
+      return;
+    if (Update.write((uint8_t *)c->getData(), n) != n) {
+      notifyMsg("OTA:ERROR write-failed");
+      Update.abort();
+      bleOtaActive = false;
+      return;
+    }
+    bleOtaReceived += n;
   }
 };
 
@@ -140,13 +169,61 @@ void notifyStatus() {
   pCtrlChar->notify();
 }
 
+void notifyMsg(const String &msg) {
+  if (!pCtrlChar || !isClientConnected) return;
+  pCtrlChar->setValue((uint8_t *)msg.c_str(), msg.length());
+  pCtrlChar->notify();
+}
+
 // =========================================================================
 // Command Parser
 // =========================================================================
 void handleCommand(const String &cmd) {
   Serial.printf("[ANTISPARK] CMD received: '%s'\n", cmd.c_str());
 
-  if (cmd.startsWith("PWR 1") || cmd.equalsIgnoreCase("ON")) {
+  if (cmd.startsWith("OTA:BEGIN:")) {
+    bleOtaExpected = cmd.substring(10).toInt();
+    bleOtaReceived = 0;
+    bleOtaActive = true;
+    if (Update.begin(bleOtaExpected)) {
+      notifyMsg("OTA:READY " + String((unsigned long)bleOtaExpected));
+      Serial.printf("[ANTISPARK] OTA started, expecting %u bytes\n", (unsigned int)bleOtaExpected);
+    } else {
+      notifyMsg("OTA:ERROR begin-failed");
+      bleOtaActive = false;
+      Serial.println(F("[ANTISPARK] OTA:ERROR begin-failed"));
+    }
+    return;
+  }
+  else if (cmd == "OTA:END") {
+    if (bleOtaActive && Update.end(true)) {
+      notifyMsg("OTA:OK rebooting");
+      Serial.println(F("[ANTISPARK] OTA:OK rebooting into new firmware"));
+      delay(300);
+      ESP.restart();
+    } else {
+      notifyMsg("OTA:ERROR end-failed");
+      Update.abort();
+      Serial.println(F("[ANTISPARK] OTA:ERROR end-failed"));
+    }
+    bleOtaActive = false;
+    return;
+  }
+  else if (cmd == "OTA:ABORT") {
+    if (bleOtaActive) {
+      Update.abort();
+      bleOtaActive = false;
+    }
+    notifyMsg("OTA:ABORTED");
+    return;
+  }
+  else if (cmd.equalsIgnoreCase("REBOOT") || cmd.equalsIgnoreCase("R")) {
+    notifyMsg("REBOOTING");
+    delay(200);
+    ESP.restart();
+    return;
+  }
+  else if (cmd.startsWith("PWR 1") || cmd.equalsIgnoreCase("ON")) {
     beaconActive = true;
     prefs.putBool("beacon", true);
     setAntisparkState(true, "BLE App Command");
@@ -249,13 +326,14 @@ void setup() {
   // Load preferences
   prefs.begin("antispark", false);
   beaconActive = prefs.getBool("beacon", true);
-  autoCutoffEnabled = prefs.getBool("autoCutoff", true);
+  autoCutoffEnabled = prefs.getBool("autoCutoff", false);
 
   Serial.printf("[ANTISPARK] Pins: Antispark +=GPIO %d, Antispark -=GPIO %d, LED=GPIO %d\n", ANTISPARK_PIN, ANTISPARK_GND_PIN, STATUS_LED_PIN);
   Serial.printf("[ANTISPARK] Config: Beacon=%d, AutoCutoff=%d\n", beaconActive, autoCutoffEnabled);
 
   // Initialize BLE
   BLEDevice::init(BLE_DEVICE_NAME);
+  BLEDevice::setMTU(517);
   pServer = BLEDevice::createServer();
   pServer->setCallbacks(new ServerCallbacks());
 
@@ -271,6 +349,13 @@ void setup() {
 
   pCtrlChar->addDescriptor(new BLE2902());
   pCtrlChar->setCallbacks(new ControlCallbacks());
+
+  pOtaChar = pService->createCharacteristic(
+    BLE_OTA_UUID,
+    BLECharacteristic::PROPERTY_WRITE |
+    BLECharacteristic::PROPERTY_WRITE_NR
+  );
+  pOtaChar->setCallbacks(new OtaCallbacks());
 
   // Default initial status
   char initBuf[64];
@@ -338,8 +423,8 @@ void loop() {
     }
   }
 
-  // Periodic status heartbeat when connected (every 3 seconds)
-  if (isClientConnected && (now - lastStatusNotify >= 3000)) {
+  // Periodic status heartbeat when connected (every 3 seconds, suppressed during OTA)
+  if (isClientConnected && !bleOtaActive && (now - lastStatusNotify >= 3000)) {
     lastStatusNotify = now;
     notifyStatus();
   }
